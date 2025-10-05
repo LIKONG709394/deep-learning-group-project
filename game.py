@@ -77,11 +77,31 @@ class SnakeGame:
             'left': (-1, 0),
             'right': (1, 0)
         }
+        # 若 direction 非預期，回退到原本方向
+        if self.direction not in mapv:
+            print(f'警告：未知方向 {self.direction}，保持原本方向')
+            self.direction = 'right'
         v = mapv.get(self.direction, (1,0))
-        head = { 'x': (self.snake[0]['x'] + v[0]) % TILE_COUNT, 'y': (self.snake[0]['y'] + v[1]) % TILE_COUNT }
+
+        # 計算新頭部座標（不環繞）
+        new_x = self.snake[0]['x'] + v[0]
+        new_y = self.snake[0]['y'] + v[1]
+        head = { 'x': new_x, 'y': new_y }
+
+        # Debug: 輸出座標以協助追蹤
+        # 這些列印會在終端顯示每次移動的頭部座標
+        print(f'[DEBUG] moving -> head=({new_x},{new_y}), dir={self.direction}, len={len(self.snake)}')
+
+        # 欄位邊界檢查（撞牆會死亡）
+        if new_x < 0 or new_x >= TILE_COUNT or new_y < 0 or new_y >= TILE_COUNT:
+            print(f'[DEBUG] 撞牆：頭部在 ({new_x},{new_y}) 超出邊界 0..{TILE_COUNT-1}')
+            self.game_over = True
+            self.running = False
+            return
 
         # 自撞檢查
         if any(s['x']==head['x'] and s['y']==head['y'] for s in self.snake):
+            print(f'[DEBUG] 自撞：頭部 {head} 與身體重疊')
             self.game_over = True
             self.running = False
             return
@@ -89,6 +109,7 @@ class SnakeGame:
         self.snake.insert(0, head)
         # 吃到食物
         if head['x'] == self.food['x'] and head['y'] == self.food['y']:
+            print('[DEBUG] 吃到食物')
             self.place_food()
         else:
             self.snake.pop()
@@ -100,6 +121,13 @@ class SnakeGame:
             pygame.draw.line(self.screen, GRID_COLOR, (x,0), (x, WINDOW_SIZE))
         for y in range(0, WINDOW_SIZE, TILE_SIZE):
             pygame.draw.line(self.screen, GRID_COLOR, (0,y), (WINDOW_SIZE, y))
+
+        # Safety: 若頭部已超出邊界也視為死亡（保險機制）
+        if self.snake:
+            head = self.snake[0]
+            if head['x'] < 0 or head['x'] >= TILE_COUNT or head['y'] < 0 or head['y'] >= TILE_COUNT:
+                self.game_over = True
+                self.running = False
 
         # 食物
         pygame.draw.rect(self.screen, FOOD_COLOR, (self.food['x']*TILE_SIZE, self.food['y']*TILE_SIZE, TILE_SIZE, TILE_SIZE))

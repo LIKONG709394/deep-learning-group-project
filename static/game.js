@@ -74,10 +74,17 @@ function draw() {
 function moveSnake() {
     if (!running) return;
 
+    // 計算新頭部位置（不環繞）
     const head = {
-        x: (snake[0].x + velocity.x + TILE_COUNT) % TILE_COUNT,
-        y: (snake[0].y + velocity.y + TILE_COUNT) % TILE_COUNT
+        x: snake[0].x + velocity.x,
+        y: snake[0].y + velocity.y
     };
+
+    // 檢查是否撞牆（超出邊界）
+    if (head.x < 0 || head.x >= TILE_COUNT || head.y < 0 || head.y >= TILE_COUNT) {
+        gameOver();
+        return;
+    }
 
     // 檢查是否撞到自己
     if (snake.some(s => s.x === head.x && s.y === head.y)) {
