@@ -253,7 +253,7 @@ def upload_model():
 
 if __name__ == '__main__':
     print('=' * 60)
-    print('AI 控制貪食蛇 - Flask 網頁版')
+    print('AI Snake Kid - Flask 網頁版')
     print('=' * 60)
     print()
     

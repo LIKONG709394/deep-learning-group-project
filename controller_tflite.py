@@ -119,50 +119,41 @@ def predict_from_path(image_path):
     return class_name, confidence
 
 # Camera loop: read frames, predict, and apply control
-def camera_loop(camera_id=0, interval=0.12, conf_threshold=0.5):
-    """攝影機即時預測迴圈"""
-    # 嘗試多個攝影機 ID 以找到 MacBook 內建鏡頭
+def camera_loop(camera_id=0, interval=0.12, conf_threshold=0.5, scan=False, allow_external=False):
+    """攝影機即時預測迴圈
+
+    預設行為：強制使用筆電內建攝影機（camera_id 0）。
+    - 無論使用者傳入哪個 camera_id，若未啟用 allow_external，皆會改為使用 0。
+    - 若筆電內建鏡頭無法開啟，程式會停止並提示，而不會自動掃描或選用其他裝置（例如手機鏡頭）。
+    若你確實要使用外接或手機鏡頭，請加上 CLI 選項 --allow-external（同時可加 --scan 或 --camera-id）。
+    """
+    # 若未允許外接裝置，強制使用內建鏡頭 id 0
+    if not allow_external:
+        enforced_camera_id = 0
+        if camera_id != enforced_camera_id:
+            print(f'警告：未允許外接攝影機，忽略傳入 camera_id {camera_id}，改以內建攝影機 ID {enforced_camera_id}')
+        camera_id = enforced_camera_id
+        scan = False  # 關閉掃描，避免選到其他裝置
+
     cap = None
-    print('正在尋找可用的攝影機...')
-    
-    # 嘗試 ID 0-3，通常 MacBook 內建鏡頭是 0 或 1
-    for cam_id in range(4):
-        test_cap = cv2.VideoCapture(cam_id)
-        if test_cap.isOpened():
-            # 讀取一幀來確認攝影機可用
-            ret, frame = test_cap.read()
-            if ret:
-                print(f'  找到攝影機 ID {cam_id}：{frame.shape[1]}x{frame.shape[0]}')
-                if cap is None and cam_id != camera_id:
-                    # 保留第一個可用的
-                    cap = test_cap
-                    camera_id = cam_id
-                elif cam_id == camera_id:
-                    # 優先使用指定的 ID
-                    if cap is not None:
-                        cap.release()
-                    cap = test_cap
-                    break
-                else:
-                    test_cap.release()
-            else:
-                test_cap.release()
-    
-    if cap is None or not cap.isOpened():
-        print('✗ 無法開啟任何攝影機')
+
+    # 只嘗試使用指定的 camera_id（可能是強制後的內建鏡頭）
+    print(f'嘗試以指定攝影機 ID {camera_id} 開啟...')
+    cap = cv2.VideoCapture(camera_id)
+    if not cap.isOpened():
+        print(f'✗ 無法開啟攝影機 ID {camera_id}（內建鏡頭）')
         print('提示：')
         print('  1. 確認已授予攝影機權限')
         print('  2. 確認沒有其他應用程式正在使用攝影機')
-        print('  3. 嘗試手動指定攝影機 ID：--camera-id 1')
+        print('  3. 若你確定要使用外接攝影機或手機鏡頭，請加上 --allow-external 選項')
         return
-    
-    print(f'✓ 使用攝影機 ID {camera_id}')
-    
+
+    print(f'✓ 使用攝影機 ID {camera_id}（僅限內建鏡頭）')
     print(f'✓ 攝影機已啟動，按 Ctrl+C 結束')
     print(f'  信心閾值：{conf_threshold}')
     print(f'  預測間隔：{interval}秒')
     print()
-    
+
     try:
         frame_count = 0
         while True:
@@ -170,13 +161,13 @@ def camera_loop(camera_id=0, interval=0.12, conf_threshold=0.5):
             if not ret:
                 sleep(interval)
                 continue
-            
+
             frame_count += 1
             # OpenCV BGR -> PIL RGB
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil = Image.fromarray(rgb)
             label, conf = predict_from_pil(pil)
-            
+
             # 每 5 幀才顯示一次（減少終端輸出）
             if frame_count % 5 == 0:
                 print(f'[{frame_count:04d}] {label:15s} {conf:.3f}', end='')
@@ -185,9 +176,9 @@ def camera_loop(camera_id=0, interval=0.12, conf_threshold=0.5):
                     print(f' ✓ 已套用')
                 else:
                     print()
-            
+
             sleep(interval)
-            
+
     except KeyboardInterrupt:
         print('\n✓ 已停止攝影機')
     finally:
@@ -197,8 +188,10 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description='TensorFlow Lite 影像分類控制器')
     p.add_argument('--image', '-i', help='單次預測：指定圖片路徑')
     p.add_argument('--camera', '-c', action='store_true', help='啟動攝影機即時預測並控制遊戲')
-    p.add_argument('--camera-id', type=int, default=0, help='攝影機 ID（預設 0，通常 MacBook 內建是 0 或 1）')
+    p.add_argument('--camera-id', type=int, default=0, help='攝影機 ID（預設 0，通常 MacBook 內建是 0）')
     p.add_argument('--threshold', '-t', type=float, default=0.5, help='信心閾值（預設 0.5）')
+    p.add_argument('--scan', action='store_true', help='若指定，則自動掃描所有攝影機以尋找可用裝置（預設關閉）')
+    p.add_argument('--allow-external', action='store_true', help='若指定，允許使用外接或手機攝影機（預設不允許）')
     args = p.parse_args()
 
     # 載入模型
@@ -214,7 +207,8 @@ if __name__ == '__main__':
     if args.image:
         predict_from_path(args.image)
     elif args.camera:
-        camera_loop(camera_id=args.camera_id, conf_threshold=args.threshold)
+        # 強制僅使用筆電內建鏡頭，除非使用 --allow-external
+        camera_loop(camera_id=args.camera_id, conf_threshold=args.threshold, scan=args.scan, allow_external=args.allow_external)
     else:
         print('未指定動作。使用 --image <路徑> 或 --camera')
         p.print_help()

@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# 快速啟動 AI 貪食蛇遊戲
+# 快速啟動 AI Snake Kid
 
-echo "🐍 AI Snake Game - Quick Start"
+echo "🐍 AI Snake Kid - Quick Start"
 echo "=============================="
 echo ""
 

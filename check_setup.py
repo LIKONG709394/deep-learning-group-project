@@ -24,7 +24,7 @@ def check_import(module_name):
 
 def main():
     print("=" * 60)
-    print("AI Snake Game - Environment Check")
+    print("AI Snake Kid - Environment Check")
     print("=" * 60)
     print()
     

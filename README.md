@@ -1,4 +1,4 @@
-# 🐍 AI-Controlled Snake Game
+# 🐍 AI Snake Kid
 
 A classic Snake game that you can control with hand gestures using your webcam and a TensorFlow Lite model trained with Google's Teachable Machine.
 
@@ -127,10 +127,20 @@ source venv/bin/activate
 python3 game.py
 ```
 
-**Terminal 2 - Start webcam controller:**
+**Terminal 2 - Start webcam controller (NOTE: will force the notebook built-in camera by default):**
 ```bash
 source venv/bin/activate
 python3 controller_tflite.py --camera
+```
+
+By default the controller will only open the notebook's built-in camera (camera ID 0) to avoid accidentally using an external device (e.g. phone camera). If you really want to allow external or phone cameras you must opt-in with `--allow-external`. You can also enable automatic scanning of available devices with `--scan` (only when `--allow-external` is used):
+
+```bash
+# Allow external camera and auto-scan to find one
+python3 controller_tflite.py --camera --allow-external --scan
+
+# Explicitly use camera ID 1 (must also allow external if it's not the built-in)
+python3 controller_tflite.py --camera --camera-id 1 --allow-external
 ```
 
 ### Advanced Options
@@ -140,11 +150,11 @@ python3 controller_tflite.py --camera
 # List available cameras
 python3 list_cameras.py
 
-# Use camera ID 0 (usually built-in MacBook camera)
+# Use camera ID 0 (built-in, recommended)
 python3 controller_tflite.py --camera --camera-id 0
 
-# Use camera ID 1 (usually external/iPhone Continuity Camera)
-python3 controller_tflite.py --camera --camera-id 1
+# To use an external camera (e.g. phone), you MUST opt in
+python3 controller_tflite.py --camera --camera-id 1 --allow-external
 ```
 
 **Adjust confidence threshold** (default 0.5):
