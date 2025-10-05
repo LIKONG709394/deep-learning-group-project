@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 控制貪食蛇</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .game-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+
+        .game-panel, .camera-panel {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+
+        .panel-title {
+            color: #333;
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        #gameCanvas {
+            display: block;
+            margin: 0 auto;
+            border: 3px solid #333;
+            border-radius: 8px;
+            background: #111;
+        }
+
+        #webcamFeed {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+        }
+
+        .info-box {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            color: #333;
+        }
+
+        .info-box h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+
+        .prediction-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            font-size: 0.9rem;
+        }
+
+        .prediction-label {
+            width: 100px;
+            font-weight: 600;
+        }
+
+        .prediction-bar {
+            flex: 1;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 0 10px;
+        }
+
+        .prediction-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s ease;
+        }
+
+        .prediction-value {
+            width: 50px;
+            text-align: right;
+            font-weight: 600;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .status.active {
+            background: #4caf50;
+            color: white;
+        }
+
+        .status.inactive {
+            background: #ff9800;
+            color: white;
+        }
+
+        .controls {
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin: 5px;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .game-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            color: #333;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        @media (max-width: 1024px) {
+            .game-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐍 AI 控制貪食蛇遊戲 🤖</h1>
+        
+        <div class="game-container">
+            <!-- 遊戲面板 -->
+            <div class="game-panel">
+                <h2 class="panel-title">🎮 遊戲</h2>
+                <canvas id="gameCanvas" width="400" height="400"></canvas>
+                
+                <div class="game-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">分數</div>
+                        <div class="stat-value" id="score">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">長度</div>
+                        <div class="stat-value" id="length">3</div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button onclick="resetGame()">🔄 重新開始</button>
+                    <button onclick="toggleAI()">🤖 <span id="aiToggleText">啟用 AI</span></button>
+                </div>
+
+                <div class="info-box">
+                    <h3>📋 操作說明</h3>
+                    <p>• 鍵盤：方向鍵或 WASD</p>
+                    <p>• AI 模式：用手勢控制（上、下、左、右）</p>
+                    <p>• 按 R 重新開始</p>
+                </div>
+            </div>
+
+            <!-- 攝影機面板 -->
+            <div class="camera-panel">
+                <h2 class="panel-title">📹 手勢辨識</h2>
+                <div id="cameraStatus" class="status inactive">
+                    ⚠️ 攝影機未啟動
+                </div>
+                
+                <img id="webcamFeed" src="/video_feed" alt="Webcam feed" />
+
+                <div class="info-box">
+                    <h3>🎯 即時預測</h3>
+                    <div id="predictions">
+                        <div class="prediction-item">
+                            <span class="prediction-label">👆 Up</span>
+                            <div class="prediction-bar">
+                                <div class="prediction-fill" id="pred-up" style="width: 0%"></div>
+                            </div>
+                            <span class="prediction-value" id="val-up">0%</span>
+                        </div>
+                        <div class="prediction-item">
+                            <span class="prediction-label">👈 Left</span>
+                            <div class="prediction-bar">
+                                <div class="prediction-fill" id="pred-left" style="width: 0%"></div>
+                            </div>
+                            <span class="prediction-value" id="val-left">0%</span>
+                        </div>
+                        <div class="prediction-item">
+                            <span class="prediction-label">👉 Right</span>
+                            <div class="prediction-bar">
+                                <div class="prediction-fill" id="pred-right" style="width: 0%"></div>
+                            </div>
+                            <span class="prediction-value" id="val-right">0%</span>
+                        </div>
+                        <div class="prediction-item">
+                            <span class="prediction-label">👇 Bottom</span>
+                            <div class="prediction-bar">
+                                <div class="prediction-fill" id="pred-bottom" style="width: 0%"></div>
+                            </div>
+                            <span class="prediction-value" id="val-bottom">0%</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px; font-size: 0.9rem;">
+                        <strong>目前方向：</strong> <span id="currentDirection">right</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/game.js"></script>
+</body>
+</html>

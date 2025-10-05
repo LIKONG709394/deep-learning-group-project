@@ -15,7 +15,7 @@ from controls import up, down, left, right
 # Disable scientific notation for clarity
 np.set_printoptions(suppress=True)
 
-MODEL_PATH = 'model_unquant1.tflite'  # TensorFlow Lite 模型（未量化版本）
+MODEL_PATH = 'model_unquant.tflite'  # TensorFlow Lite 模型（未量化版本）
 LABELS_PATH = 'labels.txt'
 IMG_SIZE = (224, 224)
 

@@ -14,7 +14,7 @@ print()
 # 載入模型
 print('步驟 1：載入模型...')
 try:
-    interpreter = tf.lite.Interpreter(model_path='model_unquant1.tflite')
+    interpreter = tf.lite.Interpreter(model_path='model_unquant.tflite')
     interpreter.allocate_tensors()
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
