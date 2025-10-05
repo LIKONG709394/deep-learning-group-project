@@ -1,15 +1,24 @@
 # app.py
 # Flask 網頁應用程式 - AI 控制貪食蛇遊戲
 
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
 import tensorflow as tf
 import threading
 import time
+import os
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+
+# 設定上傳資料夾
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'tflite', 'txt'}
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB 上限
 
 # 全域變數
 MODEL_PATH = 'model_unquant.tflite'
@@ -26,25 +35,31 @@ camera = None
 latest_predictions = [0.0, 0.0, 0.0, 0.0]
 latest_direction = None
 camera_lock = threading.Lock()
+model_lock = threading.Lock()
+
+def allowed_file(filename, extension):
+    """檢查檔案副檔名是否允許"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() == extension
 
 def load_model():
     """載入 TFLite 模型"""
     global interpreter, input_details, output_details, class_names
     
-    try:
-        interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
-        interpreter.allocate_tensors()
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
-        
-        with open(LABELS_PATH, 'r', encoding='utf-8') as f:
-            class_names = [line.strip() for line in f.readlines()]
-        
-        print(f'✓ 模型載入成功！類別數：{len(class_names)}')
-        return True
-    except Exception as e:
-        print(f'✗ 模型載入失敗：{e}')
-        return False
+    with model_lock:
+        try:
+            interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+            interpreter.allocate_tensors()
+            input_details = interpreter.get_input_details()
+            output_details = interpreter.get_output_details()
+            
+            with open(LABELS_PATH, 'r', encoding='utf-8') as f:
+                class_names = [line.strip() for line in f.readlines()]
+            
+            print(f'✓ 模型載入成功！類別數：{len(class_names)}')
+            return True
+        except Exception as e:
+            print(f'✗ 模型載入失敗：{e}')
+            return False
 
 def init_camera(camera_id=0):
     """初始化攝影機"""
@@ -182,6 +197,59 @@ def start_camera(camera_id):
     """啟動指定攝影機"""
     success = init_camera(camera_id)
     return jsonify({'success': success})
+
+@app.route('/upload_model', methods=['POST'])
+def upload_model():
+    """處理模型和標籤檔案上傳"""
+    global MODEL_PATH, LABELS_PATH
+    
+    try:
+        # 檢查檔案是否存在
+        if 'model' not in request.files or 'labels' not in request.files:
+            return jsonify({'success': False, 'error': 'Missing model or labels file'})
+        
+        model_file = request.files['model']
+        labels_file = request.files['labels']
+        
+        # 檢查檔案名稱
+        if model_file.filename == '' or labels_file.filename == '':
+            return jsonify({'success': False, 'error': 'No selected file'})
+        
+        # 驗證檔案類型
+        if not allowed_file(model_file.filename, 'tflite'):
+            return jsonify({'success': False, 'error': 'Model must be a .tflite file'})
+        
+        if not allowed_file(labels_file.filename, 'txt'):
+            return jsonify({'success': False, 'error': 'Labels must be a .txt file'})
+        
+        # 儲存檔案
+        model_filename = secure_filename('uploaded_model.tflite')
+        labels_filename = secure_filename('uploaded_labels.txt')
+        
+        model_path = os.path.join(app.config['UPLOAD_FOLDER'], model_filename)
+        labels_path = os.path.join(app.config['UPLOAD_FOLDER'], labels_filename)
+        
+        model_file.save(model_path)
+        labels_file.save(labels_path)
+        
+        # 更新全域路徑
+        MODEL_PATH = model_path
+        LABELS_PATH = labels_path
+        
+        # 重新載入模型
+        success = load_model()
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Model and labels uploaded successfully',
+                'classes': len(class_names)
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to load uploaded model'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     print('=' * 60)

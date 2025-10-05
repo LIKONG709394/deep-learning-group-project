@@ -2,9 +2,12 @@
 
 A classic Snake game that you can control with hand gestures using your webcam and a TensorFlow Lite model trained with Google's Teachable Machine.
 
+**✨ NEW: Web-based UI with model upload feature!** Upload your own trained models directly in the browser.
+
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![TensorFlow](https://img.shields.io/badge/TensorFlow-2.20-orange.svg)
 ![Pygame](https://img.shields.io/badge/Pygame-2.0+-green.svg)
+![Flask](https://img.shields.io/badge/Flask-3.0+-red.svg)
 
 ## 🎮 Features
 
@@ -12,19 +15,28 @@ A classic Snake game that you can control with hand gestures using your webcam a
 - 🤖 Real-time hand gesture recognition using TensorFlow Lite
 - 📹 Webcam-based controls (up, down, left, right)
 - ⌨️ Keyboard controls (arrow keys or WASD) as backup
+- 🌐 **Modern web interface** with live camera feed and predictions
+- 📤 **Upload your own models** - Train on Teachable Machine and upload instantly
+- 🎨 Professional navy blue & white UI design
 - 🔧 Modular design with separated control logic
 
 ## 📁 Project Structure
 
 ```
 edupython/
+├── app.py                   # Flask web server
 ├── game.py                  # Snake game logic (Pygame)
 ├── controller_tflite.py     # TFLite model inference & control
 ├── controls.py              # Shared control module
 ├── test_model.py            # Model testing utility
 ├── list_cameras.py          # Camera detection utility
-├── model_unquant1.tflite    # Your trained TFLite model
-├── labels.txt               # Class labels (up, left, right, bottom)
+├── templates/
+│   └── index.html           # Web UI template
+├── static/
+│   └── game.js              # Frontend game logic
+├── uploads/                 # User-uploaded models (gitignored)
+├── model_unquant.tflite     # Default TFLite model
+├── labels.txt               # Class labels (up, left, right, down)
 ├── requirements.txt         # Python dependencies
 └── README.md                # This file
 ```
@@ -68,7 +80,33 @@ edupython/
 
 ## 🎯 Usage
 
-### Option 1: Keyboard-Only Mode
+### 🌟 Option 1: Web Interface (Recommended)
+
+The easiest way to play! Everything in one browser window:
+
+```bash
+source venv/bin/activate
+python3 app.py
+```
+
+Then open your browser to: **http://127.0.0.1:8080**
+
+**Features:**
+- 🎮 Game on the left, camera feed on the right
+- 📊 Live prediction visualization
+- 📤 Upload your own trained models
+- 🎨 Beautiful navy blue & white UI
+- 🔄 No need to restart - models reload instantly
+
+**How to upload your model:**
+1. Train your model on [Teachable Machine](https://teachablemachine.withgoogle.com/)
+2. Download the TFLite model and labels.txt
+3. Click "Upload Your Model" section on the web page
+4. Select both files and click "Upload and Load Model"
+5. Wait a few seconds for the model to reload
+6. Start playing!
+
+### Option 2: Keyboard-Only Mode
 
 Just play the game with your keyboard:
 
@@ -79,7 +117,7 @@ python3 game.py
 - Use **arrow keys** or **WASD** to control the snake
 - Press **R** to restart
 
-### Option 2: Webcam Control Mode
+### Option 3: Command Line Mode
 
 Run the game and webcam controller in two separate terminals:
 

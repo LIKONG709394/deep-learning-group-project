@@ -183,17 +183,21 @@ document.addEventListener('keydown', (e) => {
 function toggleAI() {
     aiEnabled = !aiEnabled;
     const text = document.getElementById('aiToggleText');
-    const status = document.getElementById('cameraStatus');
+    const badge = document.getElementById('cameraBadge');
     
     if (aiEnabled) {
-        text.textContent = '停用 AI';
-        status.className = 'status active';
-        status.textContent = '✅ AI 控制已啟用';
+        text.textContent = '🔴 Disable AI';
+        if (badge) {
+            badge.className = 'badge active';
+            badge.textContent = 'Active';
+        }
         startPredictionPolling();
     } else {
-        text.textContent = '啟用 AI';
-        status.className = 'status inactive';
-        status.textContent = '⚠️ 鍵盤控制模式';
+        text.textContent = '🤖 Enable AI';
+        if (badge) {
+            badge.className = 'badge';
+            badge.textContent = 'Inactive';
+        }
         stopPredictionPolling();
     }
 }
@@ -232,7 +236,7 @@ function stopPredictionPolling() {
 
 // 更新預測顯示
 function updatePredictions(predictions) {
-    const labels = ['up', 'left', 'right', 'bottom'];
+    const labels = ['up', 'left', 'right', 'down'];
     
     predictions.forEach((prob, index) => {
         const label = labels[index];

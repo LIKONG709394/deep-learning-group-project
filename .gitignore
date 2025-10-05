@@ -55,6 +55,11 @@ env/
 .coverage
 htmlcov/
 
+# Uploaded files
+uploads/*.tflite
+uploads/*.txt
+!uploads/.gitkeep
+
 # macOS
 .DS_Store
 .AppleDouble
