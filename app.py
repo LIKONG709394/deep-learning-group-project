@@ -189,12 +189,15 @@ def get_prediction():
     """取得最新預測結果"""
     return jsonify({
         'predictions': latest_predictions,
-        'direction': latest_direction
+        'direction': latest_direction,
+        'labels': class_names
     })
 
 @app.route('/start_camera/<int:camera_id>')
 def start_camera(camera_id):
-    """啟動指定攝影機"""
+    """啟動指定攝影機（僅允許內建鏡頭 camera_id=0）"""
+    if camera_id != 0:
+        return jsonify({'success': False, 'error': 'Only built-in camera (ID 0) is allowed in this mode'})
     success = init_camera(camera_id)
     return jsonify({'success': success})
 

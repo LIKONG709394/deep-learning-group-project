@@ -25,6 +25,7 @@ function initGame() {
     placeFood();
     updateStats();
     draw();
+    generatePredictionUI(currentLabels); // Generate initial prediction UI
 }
 
 // 放置食物
@@ -211,6 +212,7 @@ function toggleAI() {
 
 // 輪詢預測
 let pollInterval = null;
+let currentLabels = ['up', 'left', 'right', 'down']; // default
 
 function startPredictionPolling() {
     if (pollInterval) return;
@@ -220,13 +222,8 @@ function startPredictionPolling() {
             const response = await fetch('/prediction');
             const data = await response.json();
             
-            if (data.predictions) {
-                updatePredictions(data.predictions);
-            }
-            
-            if (data.direction && aiEnabled) {
-                setDirection(data.direction);
-                document.getElementById('currentDirection').textContent = data.direction;
+            if (data.predictions && data.labels) {
+                updatePredictions(data.predictions, data.labels);
             }
         } catch (error) {
             console.error('預測錯誤:', error);
@@ -242,21 +239,68 @@ function stopPredictionPolling() {
 }
 
 // 更新預測顯示
-function updatePredictions(predictions) {
-    const labels = ['up', 'left', 'right', 'down'];
+function updatePredictions(predictions, labels) {
+    // Check if labels have changed
+    if (JSON.stringify(labels) !== JSON.stringify(currentLabels)) {
+        currentLabels = [...labels];
+        generatePredictionUI(labels);
+    }
     
     predictions.forEach((prob, index) => {
-        const label = labels[index];
         const percentage = (prob * 100).toFixed(1);
         
-        const fill = document.getElementById(`pred-${label}`);
-        const value = document.getElementById(`val-${label}`);
+        const fill = document.getElementById(`pred-${index}`);
+        const value = document.getElementById(`val-${index}`);
         
         if (fill && value) {
             fill.style.width = `${prob * 100}%`;
             value.textContent = `${percentage}%`;
         }
     });
+}
+
+function generatePredictionUI(labels) {
+    const container = document.getElementById('predictions');
+    container.innerHTML = ''; // Clear existing
+    
+    labels.forEach((label, index) => {
+        const item = document.createElement('div');
+        item.className = 'prediction-item';
+        
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'prediction-label';
+        labelSpan.textContent = getLabelWithEmoji(label);
+        
+        const bar = document.createElement('div');
+        bar.className = 'prediction-bar';
+        
+        const fill = document.createElement('div');
+        fill.className = 'prediction-fill';
+        fill.id = `pred-${index}`;
+        fill.style.width = '0%';
+        
+        bar.appendChild(fill);
+        
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'prediction-value';
+        valueSpan.id = `val-${index}`;
+        valueSpan.textContent = '0%';
+        
+        item.appendChild(labelSpan);
+        item.appendChild(bar);
+        item.appendChild(valueSpan);
+        
+        container.appendChild(item);
+    });
+}
+
+function getLabelWithEmoji(label) {
+    const lowerLabel = label.toLowerCase().trim();
+    if (lowerLabel.includes('up')) return '👆 ' + label;
+    if (lowerLabel.includes('down')) return '👇 ' + label;
+    if (lowerLabel.includes('left')) return '👈 ' + label;
+    if (lowerLabel.includes('right')) return '👉 ' + label;
+    return label; // fallback to plain label
 }
 
 // 初始化

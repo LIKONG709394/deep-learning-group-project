@@ -24,10 +24,44 @@ interpreter = None
 input_details = None
 output_details = None
 class_names = []
+label_to_dir = {}  # 新增：從原始標籤字串到方向的確定對照
+
+# 新增：標籤標準化與對應的輔助函式
+def _normalize_label_for_matching(s: str) -> str:
+    """標準化標籤字串：去除首尾空白、小寫、把非英數字轉空白並斷詞。
+    回傳第一個能對應的方向字串 ('up','left','right','down') 或空字串表示無法辨識。
+    """
+    if not s:
+        return ''
+    s = s.strip().lower()
+    # 把非英數字轉為空格，保留連字元會被去掉
+    clean = ''.join(ch if ch.isalnum() else ' ' for ch in s)
+    tokens = [t for t in clean.split() if t]
+    # 可能的關鍵字與同義詞
+    UP = {'up', 'uparrow', 'upwards', 'thumbsup', 'thumbs', 'palm', 'raise'}
+    LEFT = {'left', 'leftward', 'leftwards'}
+    RIGHT = {'right', 'rightward', 'rightwards'}
+    DOWN = {'down', 'bottom', 'downwards', 'downward'}
+
+    for t in tokens:
+        if t in UP:
+            return 'up'
+        if t in LEFT:
+            return 'left'
+        if t in RIGHT:
+            return 'right'
+        if t in DOWN:
+            return 'down'
+    # 若 tokens 包含像 '0','1','2','3' 的數字，回傳數字字串供後續根據索引映射
+    for t in tokens:
+        if t.isdigit():
+            return t  # 回傳數字字串，load_model_safe 會處理索引
+    # 若無法辨識，回傳空字串
+    return ''
 
 def load_model_safe():
     """載入 TensorFlow Lite 模型"""
-    global interpreter, input_details, output_details, class_names
+    global interpreter, input_details, output_details, class_names, label_to_dir
     
     if not os.path.exists(MODEL_PATH):
         print(f'警告：找不到模型檔案 {MODEL_PATH}')
@@ -49,13 +83,60 @@ def load_model_safe():
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
         
-        # 載入標籤
+        # 載入標籤（每行一個）
         with open(LABELS_PATH, 'r', encoding='utf-8') as f:
-            class_names = [line.strip() for line in f.readlines()]
-        
+            class_names = [line.strip() for line in f.readlines() if line.strip()]
+
+        if len(class_names) == 0:
+            print('✗ labels.txt 為空')
+            return False
+
+        # 嘗試建立從原始標籤到方向的映射（寬鬆匹配）
+        label_to_dir = {}
+        unmapped = []
+        for idx, name in enumerate(class_names):
+            normalized = _normalize_label_for_matching(name)
+            if normalized in ('up', 'left', 'right', 'down'):
+                label_to_dir[name] = normalized
+            elif normalized.isdigit():
+                # 標籤本身包含數字，嘗試暫時記錄為數字類別供後續索引映射使用
+                label_to_dir[name] = normalized
+            else:
+                unmapped.append((idx, name))
+
+        # 如果已有四個方向的映射，驗證 completeness
+        mapped_dirs = set(v for v in label_to_dir.values() if v in {'up','left','right','down'})
+        if mapped_dirs == {'up', 'left', 'right', 'down'} and len(class_names) == 4:
+            print('✓ labels.txt 自動解析到方向映射（包含大小寫與空白修剪）')
+        else:
+            # 若尚未完整，嘗試用數字前綴或索引作為最後手段
+            # 1) 若所有標籤都被解析為數字（例如 '0','1','2','3'），則用索引對應
+            all_numeric = all(_normalize_label_for_matching(n).isdigit() for n in class_names)
+            if all_numeric and len(class_names) == 4:
+                index_map = {0: 'up', 1: 'left', 2: 'right', 3: 'down'}
+                for i, name in enumerate(class_names):
+                    label_to_dir[name] = index_map.get(i)
+                print('⚠️ labels 為數字索引，已假定索引對應 up,left,right,down（請確認）')
+            elif len(class_names) == 4 and not mapped_dirs:
+                # 最後手段：若只有 4 類且沒有任何方向被辨識，按照檔案順序假定為 up,left,right,down
+                index_map = {0: 'up', 1: 'left', 2: 'right', 3: 'down'}
+                for i, name in enumerate(class_names):
+                    if name not in label_to_dir or not label_to_dir[name]:
+                        label_to_dir[name] = index_map.get(i)
+                print('⚠️ 未在 labels.txt 中找到方向關鍵字，已根據檔案順序假定為 up,left,right,down（請確認）')
+            else:
+                # 如果仍然無法建立完整對應，列出問題並失敗
+                print('✗ 無法自動解析 labels.txt 到 up/left/right/down 的對應。解析結果：')
+                print('  解析到的映射：', label_to_dir)
+                if unmapped:
+                    print('  未解析的標籤：', [u[1] for u in unmapped])
+                print('\n請編輯 labels.txt，確保每一行包含 up、left、right 或 down（或使用 0,1,2,3 索引）')
+                return False
+
         print(f'✓ TFLite 模型載入成功！')
         print(f'  輸入形狀：{input_details[0]["shape"]}')
         print(f'  類別數：{len(class_names)}')
+        print('  解析的 labels -> direction 對照：', {k: v for k, v in label_to_dir.items()})
         return True
         
     except Exception as e:
@@ -93,18 +174,42 @@ def predict_from_pil(pil_image):
     return class_name, confidence_score
 
 def apply_control_from_label(label):
-    """根據標籤呼叫對應的控制函式"""
+    """根據標籤呼叫對應的控制函式（使用解析後的 mapping，並寬鬆匹配輸入）"""
     if not label:
         return
-    name = label.lower()
-    if 'up' in name:
+    # 先嘗試以原始標籤完全匹配
+    for k, v in label_to_dir.items():
+        if k.lower() == label.lower():
+            mapped = v
+            break
+    else:
+        # 使用標準化嘗試匹配
+        normalized = _normalize_label_for_matching(label)
+        if normalized in ('up', 'left', 'right', 'down'):
+            mapped = normalized
+        elif normalized.isdigit():
+            # 若 normalized 是數字字串，根據索引對應（若 labels 長度為 4）
+            try:
+                idx = int(normalized)
+                if 0 <= idx < len(class_names):
+                    mapped = label_to_dir.get(class_names[idx])
+                else:
+                    mapped = None
+            except:
+                mapped = None
+        else:
+            mapped = None
+
+    if mapped == 'up':
         up()
-    elif 'down' in name or 'bottom' in name:  # 支援 down 或 bottom
+    elif mapped == 'down':
         down()
-    elif 'left' in name:
+    elif mapped == 'left':
         left()
-    elif 'right' in name:
+    elif mapped == 'right':
         right()
+    else:
+        print(f'未定義的標籤：{label}（已標準化為 "{normalized}"），請確認 labels.txt 與模型輸出')
 
 def predict_from_path(image_path):
     """從圖片檔案進行預測"""
