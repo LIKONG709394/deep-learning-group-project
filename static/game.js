@@ -246,6 +246,10 @@ function updatePredictions(predictions, labels) {
         generatePredictionUI(labels);
     }
     
+    // 找出最高信心度的預測
+    let maxIndex = 0;
+    let maxProb = predictions[0];
+    
     predictions.forEach((prob, index) => {
         const percentage = (prob * 100).toFixed(1);
         
@@ -256,7 +260,34 @@ function updatePredictions(predictions, labels) {
             fill.style.width = `${prob * 100}%`;
             value.textContent = `${percentage}%`;
         }
+        
+        // 追蹤最高信心度
+        if (prob > maxProb) {
+            maxProb = prob;
+            maxIndex = index;
+        }
     });
+    
+    // 如果 AI 啟用且信心度夠高，則控制蛇的方向
+    if (aiEnabled && maxProb > 0.5 && running) {
+        const label = labels[maxIndex];
+        const direction = mapLabelToDirection(label);
+        if (direction) {
+            setDirection(direction);
+        }
+    }
+}
+
+// 將標籤映射到方向
+function mapLabelToDirection(label) {
+    if (!label) return null;
+    
+    const name = label.toLowerCase();
+    if (name.includes('up')) return 'up';
+    if (name.includes('left')) return 'left';
+    if (name.includes('right')) return 'right';
+    if (name.includes('down') || name.includes('bottom')) return 'down';
+    return null;
 }
 
 function generatePredictionUI(labels) {
