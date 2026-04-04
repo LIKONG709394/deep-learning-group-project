@@ -1,6 +1,5 @@
-"""
-Module B: handwriting clarity (Laplacian variance + stroke-width consistency) and heatmap visualization.
-"""
+# Guess how readable the board photo is: sharpness (Laplacian) plus whether stroke
+# thickness jumps around a lot between ink blobs. Combined into 0-100 and clear/fair/poor.
 
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ except ImportError:
 
 
 def laplacian_variance(gray: np.ndarray) -> float:
-    """Global blur score: variance of Laplacian response (higher usually sharper)."""
     if gray is None or gray.size == 0:
         return 0.0
     g = gray
@@ -32,7 +30,6 @@ def laplacian_variance(gray: np.ndarray) -> float:
 
 
 def _binarize_for_strokes(gray: np.ndarray) -> np.ndarray:
-    """Binary image with text as foreground 255."""
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     g = clahe.apply(gray) if len(gray.shape) == 2 else clahe.apply(cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY))
     bw = cv2.adaptiveThreshold(
@@ -42,10 +39,6 @@ def _binarize_for_strokes(gray: np.ndarray) -> np.ndarray:
 
 
 def _stroke_widths_per_component(binary_inv: np.ndarray) -> Tuple[List[float], float]:
-    """
-    Per connected component: mean stroke radius via distance transform.
-    Returns per-component means and variance across components.
-    """
     dist = cv2.distanceTransform((binary_inv > 0).astype(np.uint8), cv2.DIST_L2, 5)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats((binary_inv > 0).astype(np.uint8))
     widths: List[float] = []
@@ -76,21 +69,19 @@ def _score_to_clarity(
     lap_messy: float,
     stroke_messy_min: float,
 ) -> Tuple[str, float, str]:
-    """
-    Combined 0–100 score and three-level label.
-    High lap_var and low stroke_var -> higher score.
-    """
+    # Map Laplacian variance to 0..1 (higher variance = sharper photo).
     if lap_var >= lap_clear:
-        lap_s = 1.0
+        sharpness_01 = 1.0
     elif lap_var <= lap_messy:
-        lap_s = 0.0
+        sharpness_01 = 0.0
     else:
-        lap_s = (lap_var - lap_messy) / (lap_clear - lap_messy + 1e-6)
+        sharpness_01 = (lap_var - lap_messy) / (lap_clear - lap_messy + 1e-6)
 
+    # Penalize uneven stroke width across connected components.
     stroke_penalty = min(1.0, stroke_var / max(stroke_messy_min, 1e-6))
-    stroke_s = max(0.0, 1.0 - stroke_penalty)
+    stroke_consistency_01 = max(0.0, 1.0 - stroke_penalty)
 
-    total = 100.0 * (0.55 * lap_s + 0.45 * stroke_s)
+    total = 100.0 * (0.55 * sharpness_01 + 0.45 * stroke_consistency_01)
     total = float(max(0.0, min(100.0, total)))
 
     if total >= 70:
@@ -113,23 +104,17 @@ def evaluate_handwriting_clarity(
     laplacian_messy_max: float = 40.0,
     stroke_variance_messy_min: float = 8.0,
 ) -> Dict[str, Any]:
-    """
-    Input: blackboard image (BGR or grayscale numpy).
-
-    Output:
-        clarity, score, suggestion, laplacian_variance, stroke_width_variance, details
-    """
     if image is None or image.size == 0:
         raise ValueError("Empty image")
 
     gray = image if len(image.shape) == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    lap_v = laplacian_variance(gray)
-    bw = _binarize_for_strokes(gray)
-    stroke_widths, stroke_var = _stroke_widths_per_component(bw)
+    blur_metric = laplacian_variance(gray)
+    ink_mask = _binarize_for_strokes(gray)
+    stroke_widths, stroke_width_variance = _stroke_widths_per_component(ink_mask)
 
     label, score, suggestion = _score_to_clarity(
-        lap_v,
-        stroke_var,
+        blur_metric,
+        stroke_width_variance,
         laplacian_clear_min,
         laplacian_messy_max,
         stroke_variance_messy_min,
@@ -139,8 +124,8 @@ def evaluate_handwriting_clarity(
         "clarity": label,
         "score": round(score, 2),
         "suggestion": suggestion,
-        "laplacian_variance": lap_v,
-        "stroke_width_variance": stroke_var,
+        "laplacian_variance": blur_metric,
+        "stroke_width_variance": stroke_width_variance,
         "details": {"num_stroke_components": len(stroke_widths)},
     }
 
@@ -150,7 +135,6 @@ def clarity_heatmap_data(
     grid_rows: int = 24,
     grid_cols: int = 32,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Split image into a grid; Laplacian variance per cell. Returns (heatmap, grid_shape)."""
     if len(gray.shape) == 3:
         gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape[:2]
@@ -174,10 +158,6 @@ def plot_clarity_heatmap(
     save_path: Optional[str] = None,
     show: bool = False,
 ) -> Optional[Any]:
-    """
-    Matplotlib: original + clarity heatmap (local Laplacian variance, normalized).
-    Returns figure or None if matplotlib missing.
-    """
     if plt is None or cm is None:
         logger.warning("matplotlib not installed; skipping heatmap.")
         return None
@@ -208,14 +188,14 @@ def run_module_b(
     image: np.ndarray,
     config: Optional[dict] = None,
 ) -> Dict[str, Any]:
-    cfg = (config or {}).get("clarity", {})
+    thresholds = (config or {}).get("clarity", {})
     result = {"clarity_result": None, "error": None}
     try:
         result["clarity_result"] = evaluate_handwriting_clarity(
             image,
-            laplacian_clear_min=float(cfg.get("laplacian_clear_min", 120.0)),
-            laplacian_messy_max=float(cfg.get("laplacian_messy_max", 40.0)),
-            stroke_variance_messy_min=float(cfg.get("stroke_variance_messy_min", 8.0)),
+            laplacian_clear_min=float(thresholds.get("laplacian_clear_min", 120.0)),
+            laplacian_messy_max=float(thresholds.get("laplacian_messy_max", 40.0)),
+            stroke_variance_messy_min=float(thresholds.get("stroke_variance_messy_min", 8.0)),
         )
     except Exception as e:
         result["error"] = str(e)

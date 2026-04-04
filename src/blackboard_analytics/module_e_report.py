@@ -1,6 +1,5 @@
-"""
-Module E: PDF teaching feedback report (ReportLab + optional CJK font on Windows).
-"""
+# Lay out the same numbers you see in JSON as a simple A4 PDF. On Windows we try common
+# Chinese fonts first so mixed OCR/speech text does not render as tofu boxes.
 
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ except ImportError:
 
 
 def _register_cjk_font() -> str:
-    """Return a font name that can render CJK if OCR/speech contains Chinese."""
     if canvas is None:
         return "Helvetica"
     candidates = [
@@ -51,7 +49,6 @@ def build_teaching_feedback_pdf(
     speech_text: str = "",
     module_errors: Optional[Dict[str, str]] = None,
 ) -> str:
-    """Build PDF; returns absolute path written."""
     if canvas is None:
         raise RuntimeError("Install reportlab")
 
@@ -77,11 +74,12 @@ def build_teaching_feedback_pdf(
             c.drawString(50 + indent, y, safe.encode("ascii", "replace").decode("ascii")[:120])
         y -= line_h
 
-    draw_line("Classroom blackboard analytics — teaching feedback report")
+    draw_line("Classroom blackboard analytics - teaching feedback report")
     y -= 8
     draw_line(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
     y -= 8
 
+    # Section 1: recognized lines from the board image
     draw_line("1. Board OCR")
     if board_lines:
         for t in board_lines:
@@ -90,6 +88,7 @@ def build_teaching_feedback_pdf(
         draw_line("(no text recognized)", indent=10)
     y -= 8
 
+    # Section 2: legibility score and short advice
     draw_line("2. Handwriting clarity")
     if clarity:
         draw_line(f"Level: {clarity.get('clarity', '')}  Score: {clarity.get('score', '')}", indent=10)
@@ -101,12 +100,14 @@ def build_teaching_feedback_pdf(
         )
     y -= 8
 
+    # Section 3: raw transcript
     draw_line("3. Speech summary (Whisper)")
     st = speech_text or "(missing or transcription failed)"
     for chunk in range(0, len(st), 90):
         draw_line(st[chunk : chunk + 90], indent=10)
     y -= 8
 
+    # Section 4: do board and speech agree?
     draw_line("4. Board vs speech alignment")
     if alignment:
         draw_line(f"Semantic similarity: {alignment.get('semantic_similarity')}", indent=10)
@@ -117,10 +118,10 @@ def build_teaching_feedback_pdf(
 
     if module_errors:
         y -= 8
-        draw_line("5. Module errors")
-        for k, v in module_errors.items():
-            if v:
-                draw_line(f"{k}: {v}", indent=10)
+        draw_line("5. Steps that reported an error")
+        for step_name, message in module_errors.items():
+            if message:
+                draw_line(f"{step_name}: {message}", indent=10)
 
     c.save()
     return str(path.resolve())
@@ -130,15 +131,21 @@ def run_module_e(
     output_path: str,
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
+    lines = payload.get("board_lines") or []
+    clarity_block = payload.get("clarity") or {}
+    align_block = payload.get("alignment")
+    spoken = payload.get("speech_text") or ""
+    failures = payload.get("module_errors")
+
     out: Dict[str, Any] = {"pdf_path": None, "error": None}
     try:
         out["pdf_path"] = build_teaching_feedback_pdf(
             output_path,
-            board_lines=payload.get("board_lines") or [],
-            clarity=payload.get("clarity") or {},
-            alignment=payload.get("alignment"),
-            speech_text=payload.get("speech_text") or "",
-            module_errors=payload.get("module_errors"),
+            board_lines=lines,
+            clarity=clarity_block,
+            alignment=align_block,
+            speech_text=spoken,
+            module_errors=failures,
         )
     except Exception as e:
         out["error"] = str(e)

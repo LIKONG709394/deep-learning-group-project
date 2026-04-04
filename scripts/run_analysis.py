@@ -1,7 +1,4 @@
-"""
-CLI: python run_analysis.py --image frame.jpg --audio clip.mp3 --pdf out.pdf
-(Audio must be MP3; ffmpeg required for MP3.)
-"""
+# Run the teaching pipeline from the terminal: still image + MP3 in, JSON on stdout.
 
 from __future__ import annotations
 
@@ -21,24 +18,30 @@ from blackboard_analytics.pipeline import run_from_image_and_audio_files
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Classroom blackboard analytics (single frame + audio)")
-    p.add_argument("--image", required=True, help="Blackboard frame image path (OpenCV-readable)")
-    p.add_argument("--audio", required=True, help="Aligned audio segment (.mp3 only; ffmpeg required)")
-    p.add_argument("--pdf", default="output/teaching_feedback.pdf", help="Output PDF path")
-    p.add_argument("--config", default=None, help="Optional YAML config path")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image", required=True, help="Blackboard frame image path (OpenCV-readable)")
+    parser.add_argument("--audio", required=True, help="Aligned audio segment (.mp3 only; ffmpeg required)")
+    parser.add_argument("--pdf", default="output/teaching_feedback.pdf", help="Output PDF path")
+    parser.add_argument("--config", default=None, help="Optional YAML config path")
+    args = parser.parse_args()
 
+    # We only accept MP3 here so the support story stays simple (one decoder path on the server).
     if Path(args.audio).suffix.lower() != ".mp3":
         print("Error: audio must be MP3 (.mp3).", file=sys.stderr)
         sys.exit(2)
 
-    cfg = None
+    optional_settings = None
     if args.config and Path(args.config).is_file():
         with open(args.config, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
+            optional_settings = yaml.safe_load(f)
 
-    result = run_from_image_and_audio_files(args.image, args.audio, config=cfg, pdf_output=args.pdf)
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    outcome = run_from_image_and_audio_files(
+        args.image,
+        args.audio,
+        config=optional_settings,
+        pdf_output=args.pdf,
+    )
+    print(json.dumps(outcome, ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":

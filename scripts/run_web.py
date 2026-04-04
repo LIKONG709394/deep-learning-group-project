@@ -1,10 +1,4 @@
-"""Start the web UI from the classroom_blackboard_analytics directory: python scripts/run_web.py
-
-Default bind: 0.0.0.0 (LAN access via http://<this-pc-ip>:port).
-Local only: python scripts/run_web.py --local
-
-Env: BLACKBOARD_WEB_HOST, BLACKBOARD_WEB_PORT (overridden by CLI).
-"""
+# Starts the same pipeline as the CLI, but behind a browser UI (FastAPI + static files).
 
 from __future__ import annotations
 
@@ -25,7 +19,7 @@ def main() -> None:
     default_host = os.environ.get("BLACKBOARD_WEB_HOST", "0.0.0.0")
     default_port = int(os.environ.get("BLACKBOARD_WEB_PORT", "8766"))
 
-    p = argparse.ArgumentParser(description="Blackboard analytics web server")
+    p = argparse.ArgumentParser()
     p.add_argument(
         "--host",
         default=default_host,

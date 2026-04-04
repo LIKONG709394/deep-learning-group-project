@@ -1,14 +1,10 @@
-"""
-Blackboard analytics HTTP API: upload image + MP3 -> pipeline -> JSON + PDF download.
-
-Run from classroom_blackboard_analytics:
-  uvicorn web.server:app --host 0.0.0.0 --port 8766
-  uvicorn web.server:app --host 127.0.0.1 --port 8766
-"""
+# Small HTTP front-end: browser sends a photo of the board + an MP3, server runs the same
+# pipeline as the CLI and hands back JSON plus a link to download the PDF.
 
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 import threading
 import time
@@ -34,35 +30,39 @@ from blackboard_analytics.pipeline import run_from_frame_and_audio
 
 logger = logging.getLogger(__name__)
 
-SESSION_TTL_SEC = 3600
-_session_lock = threading.Lock()
-_sessions: Dict[str, Dict[str, Any]] = {}
+# After an hour we forget the session and delete the temp folder so old uploads don’t pile up.
+PDF_TTL_SEC = 3600
+_lock = threading.Lock()
+_pending: Dict[str, Dict[str, Any]] = {}
 
 
-def _cleanup_sessions() -> None:
+def _expire_old_uploads() -> None:
     now = time.time()
-    with _session_lock:
-        dead = [k for k, v in _sessions.items() if now - v.get("created", 0) > SESSION_TTL_SEC]
-        for k in dead:
-            meta = _sessions.pop(k, None)
-            if meta and meta.get("workdir"):
-                import shutil
-
+    with _lock:
+        too_old = [
+            session_id
+            for session_id, meta in _pending.items()
+            if now - meta.get("created", 0) > PDF_TTL_SEC
+        ]
+        for session_id in too_old:
+            meta = _pending.pop(session_id, None)
+            folder = meta.get("workdir") if meta else None
+            if folder:
                 try:
-                    shutil.rmtree(meta["workdir"], ignore_errors=True)
+                    shutil.rmtree(folder, ignore_errors=True)
                 except Exception:
                     pass
 
 
-def _bytes_to_bgr(data: bytes) -> np.ndarray:
-    arr = np.frombuffer(data, dtype=np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Cannot decode image; use JPG/PNG/WebP")
-    return img
+def decode_uploaded_photo(file_bytes: bytes) -> np.ndarray:
+    raw = np.frombuffer(file_bytes, dtype=np.uint8)
+    picture = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+    if picture is None:
+        raise ValueError("Could not open this file as an image (try JPG, PNG, or WebP).")
+    return picture
 
 
-app = FastAPI(title="Blackboard analytics", version="0.1.0")
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -72,72 +72,72 @@ app.add_middleware(
 
 
 @app.post("/api/analyze")
-async def api_analyze(
-    image: UploadFile = File(..., description="Blackboard frame (JPG/PNG)"),
-    audio: UploadFile = File(..., description="MP3 only (ffmpeg on PATH)"),
-) -> JSONResponse:
-    _cleanup_sessions()
-    img_bytes = await image.read()
-    aud_bytes = await audio.read()
-    if len(img_bytes) < 32:
+async def api_analyze(image: UploadFile = File(...), audio: UploadFile = File(...)) -> JSONResponse:
+    _expire_old_uploads()
+
+    photo_bytes = await image.read()
+    sound_bytes = await audio.read()
+    if len(photo_bytes) < 32:
         raise HTTPException(400, "Image too small or empty")
-    if len(aud_bytes) < 32:
+    if len(sound_bytes) < 32:
         raise HTTPException(400, "Audio too small or empty")
 
-    aud_name = audio.filename or ""
-    if Path(aud_name).suffix.lower() != ".mp3":
+    audio_filename = audio.filename or ""
+    if Path(audio_filename).suffix.lower() != ".mp3":
         raise HTTPException(400, "Audio must be MP3 (.mp3 extension)")
 
-    workdir = ROOT / "web_uploads" / uuid.uuid4().hex
-    workdir.mkdir(parents=True, exist_ok=True)
-    img_suffix = Path(image.filename or "frame.jpg").suffix or ".jpg"
-    img_path = workdir / f"frame{img_suffix}"
-    aud_path = workdir / "audio.mp3"
-    pdf_path = workdir / "report.pdf"
+    # Each request gets its own folder so two people analyzing at once don’t overwrite each other.
+    scratch_dir = ROOT / "web_uploads" / uuid.uuid4().hex
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(image.filename or "frame.jpg").suffix or ".jpg"
+    path_to_photo = scratch_dir / f"frame{suffix}"
+    path_to_mp3 = scratch_dir / "audio.mp3"
+    path_to_pdf = scratch_dir / "report.pdf"
 
-    img_path.write_bytes(img_bytes)
-    aud_path.write_bytes(aud_bytes)
+    path_to_photo.write_bytes(photo_bytes)
+    path_to_mp3.write_bytes(sound_bytes)
 
     try:
-        frame = _bytes_to_bgr(img_bytes)
+        blackboard_frame = decode_uploaded_photo(photo_bytes)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
     try:
-        result = run_from_frame_and_audio(
-            frame,
-            str(aud_path),
+        analysis = run_from_frame_and_audio(
+            blackboard_frame,
+            str(path_to_mp3),
             config=None,
-            pdf_output=str(pdf_path),
+            pdf_output=str(path_to_pdf),
         )
     except Exception as e:
         logger.exception("pipeline")
         raise HTTPException(500, f"Analysis failed: {e}") from e
 
-    sid = uuid.uuid4().hex
-    with _session_lock:
-        _sessions[sid] = {
+    download_id = uuid.uuid4().hex
+    with _lock:
+        _pending[download_id] = {
             "created": time.time(),
-            "pdf_path": str(pdf_path) if pdf_path.is_file() else None,
-            "workdir": str(workdir),
+            "pdf_path": str(path_to_pdf) if path_to_pdf.is_file() else None,
+            "workdir": str(scratch_dir),
         }
 
-    payload = {"session_id": sid, "result": result}
-    return JSONResponse(content=jsonable_encoder(payload))
+    return JSONResponse(
+        content=jsonable_encoder({"session_id": download_id, "result": analysis})
+    )
 
 
 @app.get("/api/report/{session_id}")
 async def api_report(session_id: str) -> FileResponse:
-    _cleanup_sessions()
-    with _session_lock:
-        meta = _sessions.get(session_id)
-    if not meta or not meta.get("pdf_path"):
+    _expire_old_uploads()
+    with _lock:
+        remembered = _pending.get(session_id)
+    if not remembered or not remembered.get("pdf_path"):
         raise HTTPException(404, "Report not found or expired; run analyze again")
-    p = Path(meta["pdf_path"])
-    if not p.is_file():
+    pdf_on_disk = Path(remembered["pdf_path"])
+    if not pdf_on_disk.is_file():
         raise HTTPException(404, "PDF file missing")
     return FileResponse(
-        path=str(p),
+        path=str(pdf_on_disk),
         filename="teaching_feedback.pdf",
         media_type="application/pdf",
     )
@@ -145,9 +145,9 @@ async def api_report(session_id: str) -> FileResponse:
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"ok": True, "service": "blackboard-analytics"}
+    return {"ok": True}
 
 
-static_dir = WEB_DIR / "static"
-if static_dir.is_dir():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+_static = WEB_DIR / "static"
+if _static.is_dir():
+    app.mount("/", StaticFiles(directory=str(_static), html=True), name="ui")

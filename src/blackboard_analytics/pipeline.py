@@ -1,9 +1,6 @@
-"""
-End-to-end pipeline: video frame + audio -> modules A/B/C/D -> PDF.
-
-Full video workflows need ffmpeg to extract frames and audio; this package provides
-`run_from_frame_and_audio` (single BGR frame + audio file) and optional `extract_audio_ffmpeg`.
-"""
+# One still frame of the board + one audio clip -> structured feedback + PDF.
+# Order matches how a person would look at a lesson: what is written, how legible it is,
+# what was said, whether talk matches the board, then a printable summary.
 
 from __future__ import annotations
 
@@ -32,7 +29,7 @@ def load_bgr_image(image_path: str) -> np.ndarray:
 
 
 def extract_audio_ffmpeg(video_path: str, wav_out: str, overwrite: bool = True) -> str:
-    """Extract mono 16 kHz WAV from video using ffmpeg (ffmpeg must be on PATH)."""
+    # mono 16kHz wav; needs ffmpeg on PATH
     out = Path(wav_out)
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -64,60 +61,58 @@ def run_from_frame_and_audio(
     config: Optional[dict] = None,
     pdf_output: str = "output/teaching_feedback.pdf",
 ) -> Dict[str, Any]:
-    """
-    Pipeline:
-      A(frame) -> board texts
-      B(frame) -> clarity
-      C(audio) -> speech text
-      D(join(board), speech) -> alignment
-      E -> PDF
+    settings = config or {}
+    # Anything that went wrong in a step; we keep going so the report still has partial info.
+    problems: Dict[str, str] = {}
 
-    Returns:
-        Aggregated dict including per-module outputs and errors.
-    """
-    cfg = config or {}
-    errors: Dict[str, str] = {}
+    # Step 1 - What text appears on the board? (find the board area, then read lines.)
+    board_reading = run_module_a(frame_bgr, settings)
+    if board_reading.get("error"):
+        problems["module_a"] = board_reading["error"]
 
-    a = run_module_a(frame_bgr, cfg)
-    if a.get("error"):
-        errors["module_a"] = a["error"]
+    # Step 2 - How easy is that handwriting to read from a photo? (blur + stroke consistency.)
+    handwriting_clarity = run_module_b(frame_bgr, settings)
+    if handwriting_clarity.get("error"):
+        problems["module_b"] = handwriting_clarity["error"]
 
-    b = run_module_b(frame_bgr, cfg)
-    if b.get("error"):
-        errors["module_b"] = b["error"]
+    # Step 3 - What does the teacher actually say on the recording?
+    spoken_transcript = run_module_c(audio_path, settings)
+    if spoken_transcript.get("error"):
+        problems["module_c"] = spoken_transcript["error"]
 
-    c = run_module_c(audio_path, cfg)
-    if c.get("error"):
-        errors["module_c"] = c["error"]
+    lines_on_board = board_reading.get("texts") or []
+    board_as_paragraph = "\n".join(lines_on_board)
+    speech_text = spoken_transcript.get("speech_text") or ""
 
-    board_full = "\n".join(a.get("texts") or [])
-    d = run_module_d(board_full, c.get("speech_text") or "", cfg)
-    if d.get("error"):
-        errors["module_d"] = d["error"]
+    # Step 4 - Does the lesson audio line up with what is written? (meaning + shared terms.)
+    lesson_alignment = run_module_d(board_as_paragraph, speech_text, settings)
+    if lesson_alignment.get("error"):
+        problems["module_d"] = lesson_alignment["error"]
 
-    clarity_dict = (b.get("clarity_result") or {}) if b else {}
-    align_dict = (d.get("alignment") or None) if d else None
+    clarity_numbers = handwriting_clarity.get("clarity_result") or {}
+    alignment_summary = lesson_alignment.get("alignment")
 
-    payload = {
-        "board_lines": a.get("texts") or [],
-        "clarity": clarity_dict,
-        "alignment": align_dict,
-        "speech_text": c.get("speech_text") or "",
-        "module_errors": errors or None,
+    # Step 5 - Turn the above into one PDF someone can save or print.
+    bundle_for_pdf = {
+        "board_lines": lines_on_board,
+        "clarity": clarity_numbers,
+        "alignment": alignment_summary,
+        "speech_text": speech_text,
+        "module_errors": problems or None,
     }
-    e = run_module_e(pdf_output, payload)
-    if e.get("error"):
-        errors["module_e"] = e["error"]
+    pdf_bundle = run_module_e(pdf_output, bundle_for_pdf)
+    if pdf_bundle.get("error"):
+        problems["module_e"] = pdf_bundle["error"]
 
     return {
-        "board_texts": a.get("texts"),
-        "board_roi": a.get("roi"),
-        "roi_method": a.get("roi_method"),
-        "clarity": clarity_dict,
-        "speech_text": c.get("speech_text"),
-        "alignment": align_dict,
-        "pdf_path": e.get("pdf_path"),
-        "errors": errors,
+        "board_texts": board_reading.get("texts"),
+        "board_roi": board_reading.get("roi"),
+        "roi_method": board_reading.get("roi_method"),
+        "clarity": clarity_numbers,
+        "speech_text": spoken_transcript.get("speech_text"),
+        "alignment": alignment_summary,
+        "pdf_path": pdf_bundle.get("pdf_path"),
+        "errors": problems,
     }
 
 
@@ -127,5 +122,5 @@ def run_from_image_and_audio_files(
     config: Optional[dict] = None,
     pdf_output: str = "output/teaching_feedback.pdf",
 ) -> Dict[str, Any]:
-    frame = load_bgr_image(image_path)
-    return run_from_frame_and_audio(frame, audio_path, config=config, pdf_output=pdf_output)
+    picture = load_bgr_image(image_path)
+    return run_from_frame_and_audio(picture, audio_path, config=config, pdf_output=pdf_output)

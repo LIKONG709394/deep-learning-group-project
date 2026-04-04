@@ -1,18 +1,20 @@
-"""
-Module A: blackboard ROI (YOLOv8) + handwritten OCR (microsoft/trocr-base-handwritten).
-"""
+# Read handwriting from a classroom photo.
+# Rough flow: locate the board (trained detector if you have weights, else "biggest ink blob",
+# else the whole photo), split into horizontal text bands, run TrOCR on each band.
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, Union  # Any for PIL return
+from typing import Any, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+TROCR_DEFAULT = "microsoft/trocr-base-handwritten"
 
 try:
     from ultralytics import YOLO
@@ -55,13 +57,7 @@ def preprocess_image(
     binary_block_size: int = 31,
     binary_c: int = 5,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    OpenCV: grayscale -> CLAHE -> adaptive threshold.
-
-    Returns:
-        gray_enhanced: CLAHE grayscale (for YOLO / viz)
-        binary_inv: binary (text white 255, background 0) for line segmentation
-    """
+    # CLAHE gray + adaptive INV (fg white) for line masks
     if image_bgr is None or image_bgr.size == 0:
         raise ValueError("Empty image")
 
@@ -88,7 +84,6 @@ def _largest_contour_roi(
     binary_inv: np.ndarray,
     min_area_ratio: float = 0.05,
 ) -> Optional[ROIBox]:
-    """Heuristic: largest contour bounding box as blackboard candidate (no YOLO weights)."""
     h, w = binary_inv.shape[:2]
     contours, _ = cv2.findContours(binary_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -106,6 +101,37 @@ def _largest_contour_roi(
     return None
 
 
+def _largest_yolo_box_for_class(
+    image_bgr: np.ndarray,
+    weights_file: Union[str, Path],
+    conf: float,
+    iou: float,
+    wanted_class_id: int,
+    frame_w: int,
+    frame_h: int,
+) -> Optional[ROIBox]:
+    """Pick the biggest detection whose class id matches the blackboard class."""
+    if YOLO is None:
+        return None
+    model = YOLO(str(weights_file))
+    results = model.predict(source=image_bgr, conf=conf, iou=iou, verbose=False)
+    if not results or results[0].boxes is None or len(results[0].boxes) == 0:
+        return None
+    boxes = results[0].boxes
+    biggest: Optional[ROIBox] = None
+    biggest_area = 0
+    for idx in range(len(boxes)):
+        cls_id = int(boxes.cls[idx].item()) if boxes.cls is not None else 0
+        if cls_id != wanted_class_id:
+            continue
+        x1, y1, x2, y2 = map(int, boxes.xyxy[idx].cpu().numpy().ravel())
+        area = max(0, x2 - x1) * max(0, y2 - y1)
+        if area > biggest_area:
+            biggest_area = area
+            biggest = ROIBox(x1, y1, x2, y2).clip(frame_w, frame_h)
+    return biggest if biggest_area > 0 else None
+
+
 def detect_blackboard_roi(
     image_bgr: np.ndarray,
     *,
@@ -114,54 +140,38 @@ def detect_blackboard_roi(
     iou: float = 0.45,
     blackboard_class_id: int = 0,
 ) -> Tuple[ROIBox, str]:
-    """
-    YOLOv8 blackboard detection; on failure fall back to contour heuristic or full frame.
+    frame_h, frame_w = image_bgr.shape[:2]
 
-    Returns:
-        (roi, method) where method is 'yolo' | 'heuristic' | 'full_frame'
-    """
-    h, w = image_bgr.shape[:2]
-
-    if yolo_weights_path and Path(yolo_weights_path).is_file():
+    weights_ok = yolo_weights_path and Path(yolo_weights_path).is_file()
+    if weights_ok:
         if YOLO is None:
             logger.warning("ultralytics not installed; skipping YOLO.")
         else:
             try:
-                model = YOLO(str(yolo_weights_path))
-                results = model.predict(
-                    source=image_bgr,
-                    conf=conf,
-                    iou=iou,
-                    verbose=False,
+                yolo_roi = _largest_yolo_box_for_class(
+                    image_bgr,
+                    Path(yolo_weights_path),
+                    conf,
+                    iou,
+                    blackboard_class_id,
+                    frame_w,
+                    frame_h,
                 )
-                if results and results[0].boxes is not None and len(results[0].boxes):
-                    boxes = results[0].boxes
-                    best = None
-                    best_area = 0
-                    for i in range(len(boxes)):
-                        cls_id = int(boxes.cls[i].item()) if boxes.cls is not None else 0
-                        if cls_id != blackboard_class_id:
-                            continue
-                        xyxy = boxes.xyxy[i].cpu().numpy().ravel()
-                        x1, y1, x2, y2 = map(int, xyxy)
-                        area = max(0, x2 - x1) * max(0, y2 - y1)
-                        if area > best_area:
-                            best_area = area
-                            best = ROIBox(x1, y1, x2, y2).clip(w, h)
-                    if best is not None and best_area > 0:
-                        return best, "yolo"
+                if yolo_roi is not None:
+                    return yolo_roi, "yolo"
             except Exception as e:
                 logger.warning("YOLO inference failed, using heuristic: %s", e)
 
     try:
-        _, binary_inv = preprocess_image(image_bgr)
-        roi = _largest_contour_roi(binary_inv)
-        if roi is not None:
-            return roi, "heuristic"
+        _, ink_mask = preprocess_image(image_bgr)
+        contour_roi = _largest_contour_roi(ink_mask)
+        if contour_roi is not None:
+            return contour_roi, "heuristic"
     except Exception as e:
         logger.warning("Heuristic ROI failed: %s", e)
 
-    return ROIBox(0, 0, w, h), "full_frame"
+    whole_shot = ROIBox(0, 0, frame_w, frame_h)
+    return whole_shot, "full_frame"
 
 
 def crop_roi(image: np.ndarray, roi: ROIBox) -> np.ndarray:
@@ -178,10 +188,7 @@ def segment_text_lines(
     min_gap: int = 5,
     pad_y: int = 4,
 ) -> List[Tuple[int, int]]:
-    """
-    Horizontal projection line segmentation.
-    Returns list of (y_start, y_end) with padding, relative to ROI.
-    """
+    # row sums → line bands (y0,y1) in ROI coords
     h, w = binary_inv_roi.shape[:2]
     proj = (binary_inv_roi > 0).astype(np.float32).sum(axis=1)
     threshold = max(1.0, 0.02 * w)
@@ -233,9 +240,9 @@ def _pil_line_from_gray(gray_line: np.ndarray, target_h: int = 384) -> Any:
 
 
 class TrOCRHandwritingEngine:
-    """Lazy-load TrOCR to avoid GPU/RAM use on import."""
+    # Models load on first use so importing this file stays light.
 
-    def __init__(self, model_name: str = "microsoft/trocr-base-handwritten") -> None:
+    def __init__(self, model_name: str = TROCR_DEFAULT) -> None:
         self.model_name = model_name
         self._processor = None
         self._model = None
@@ -272,86 +279,80 @@ def recognize_blackboard_handwriting(
     image_bgr: np.ndarray,
     *,
     yolo_weights_path: Optional[Union[str, Path]] = None,
-    trocr_model_name: str = "microsoft/trocr-base-handwritten",
+    trocr_model_name: str = TROCR_DEFAULT,
     conf: float = 0.25,
     iou: float = 0.45,
     blackboard_class_id: int = 0,
     engine: Optional[TrOCRHandwritingEngine] = None,
 ) -> List[str]:
-    """
-    Full pipeline: preprocess -> ROI -> line split -> TrOCR per line.
-
-    Returns:
-        List of recognized strings (one per line, stripped; may be empty on failure)
-    """
-    texts: List[str] = []
+    recognized_lines: List[str] = []
     try:
-        roi, method = detect_blackboard_roi(
+        board_region, how_found = detect_blackboard_roi(
             image_bgr,
             yolo_weights_path=yolo_weights_path,
             conf=conf,
             iou=iou,
             blackboard_class_id=blackboard_class_id,
         )
-        logger.info("Blackboard ROI method: %s", method)
-        roi_img = crop_roi(image_bgr, roi)
-        gray_enhanced, binary_inv = preprocess_image(roi_img)
-        line_spans = segment_text_lines(binary_inv)
+        logger.info("Blackboard ROI method: %s", how_found)
+
+        board_crop = crop_roi(image_bgr, board_region)
+        gray_enhanced, ink_for_lines = preprocess_image(board_crop)
+        line_spans = segment_text_lines(ink_for_lines)
         if not line_spans:
             line_spans = [(0, gray_enhanced.shape[0])]
 
-        ocr_engine = engine or TrOCRHandwritingEngine(trocr_model_name)
-        for y0, y1 in line_spans:
-            line_gray = gray_enhanced[y0:y1, :]
+        reader = engine or TrOCRHandwritingEngine(trocr_model_name)
+        for row_top, row_bottom in line_spans:
+            line_gray = gray_enhanced[row_top:row_bottom, :]
             if line_gray.size == 0:
                 continue
             if (line_gray > 0).sum() < 50:
                 continue
             try:
-                t = ocr_engine.decode_line(line_gray)
-                if t:
-                    texts.append(t)
+                line_text = reader.decode_line(line_gray)
+                if line_text:
+                    recognized_lines.append(line_text)
             except Exception as e:
                 logger.warning("Line OCR failed (skipped): %s", e)
     except Exception as e:
         logger.error("Blackboard OCR pipeline failed: %s", e)
         raise
-    return texts
+    return recognized_lines
 
 
 def run_module_a(
     image_bgr: np.ndarray,
     config: Optional[dict] = None,
 ) -> dict:
-    """
-    Module A output for pipeline wiring.
-
-    Input:
-        image_bgr: BGR uint8 numpy
-    Output:
-        dict: texts, roi, roi_method, error (optional)
-    """
     cfg = config or {}
-    ycfg = cfg.get("yolo", {})
-    tcfg = cfg.get("trocr", {})
+    yolo_opts = cfg.get("yolo", {})
+    trocr_opts = cfg.get("trocr", {})
+
+    weights = yolo_opts.get("weights_path")
+    det_conf = float(yolo_opts.get("conf", 0.25))
+    det_iou = float(yolo_opts.get("iou", 0.45))
+    board_class = int(yolo_opts.get("blackboard_class_id", 0))
+    handwriting_model = str(trocr_opts.get("model_name", TROCR_DEFAULT))
+
     out: dict = {"texts": [], "roi": None, "roi_method": None, "error": None}
     try:
         roi, method = detect_blackboard_roi(
             image_bgr,
-            yolo_weights_path=ycfg.get("weights_path"),
-            conf=float(ycfg.get("conf", 0.25)),
-            iou=float(ycfg.get("iou", 0.45)),
-            blackboard_class_id=int(ycfg.get("blackboard_class_id", 0)),
+            yolo_weights_path=weights,
+            conf=det_conf,
+            iou=det_iou,
+            blackboard_class_id=board_class,
         )
         out["roi"] = roi.as_tuple()
         out["roi_method"] = method
         out["texts"] = recognize_blackboard_handwriting(
             image_bgr,
-            yolo_weights_path=ycfg.get("weights_path"),
-            trocr_model_name=str(tcfg.get("model_name", "microsoft/trocr-base-handwritten")),
-            conf=float(ycfg.get("conf", 0.25)),
-            iou=float(ycfg.get("iou", 0.45)),
-            blackboard_class_id=int(ycfg.get("blackboard_class_id", 0)),
+            yolo_weights_path=weights,
+            trocr_model_name=handwriting_model,
+            conf=det_conf,
+            iou=det_iou,
+            blackboard_class_id=board_class,
         )
     except Exception as e:
         out["error"] = str(e)

@@ -1,9 +1,5 @@
-"""
-Module C: openai-whisper speech-to-text.
-
-Prefer feeding float32 numpy audio to Whisper to avoid relying on ffmpeg (common WinError 2 on Windows).
-MP3/M4A still require a working ffmpeg on PATH unless decoded elsewhere.
-"""
+# Turn the MP3 (or decodable wav) into text with Whisper. We load wav-like files into
+# numpy first when we can, so Windows users see fewer "ffmpeg not found" surprises.
 
 from __future__ import annotations
 
@@ -36,7 +32,6 @@ _FFMPEG_HINT = (
 
 
 def _find_ffmpeg_executable() -> Optional[str]:
-    """Resolve ffmpeg from PATH, FFMPEG_PATH, or common Windows install locations."""
     found = shutil.which("ffmpeg")
     if found:
         return found
@@ -84,7 +79,6 @@ def _find_ffmpeg_executable() -> Optional[str]:
 
 
 def _ensure_ffmpeg_on_path() -> bool:
-    """Prepend ffmpeg directory to PATH for this process if needed."""
     if shutil.which("ffmpeg"):
         return True
     exe = _find_ffmpeg_executable()
@@ -132,7 +126,6 @@ def _resample_to_16k(audio: "np.ndarray", fr: int) -> "np.ndarray":
 
 
 def _load_wav_stdlib_16k_mono(path: Path) -> "np.ndarray":
-    """16-bit PCM WAV only."""
     if np is None:
         raise RuntimeError("numpy required")
     with wave.open(str(path), "rb") as wf:
@@ -179,7 +172,6 @@ def _try_loaders(path: Path, loaders: List[Callable[[Path], "np.ndarray"]]) -> O
 
 
 def _load_audio_as_numpy_no_ffmpeg(path: Path) -> Optional["np.ndarray"]:
-    """Decode to float32 mono 16 kHz without ffmpeg; None => use file path + ffmpeg."""
     if np is None:
         return None
     ext = path.suffix.lower()
@@ -214,12 +206,6 @@ def transcribe_audio(
     language: Optional[str] = None,
     task: str = "transcribe",
 ) -> str:
-    """
-    Transcribe audio file to text.
-
-    WAV: try stdlib / scipy / soundfile first (often no ffmpeg).
-    MP3/M4A: require ffmpeg on PATH (or FFMPEG_PATH).
-    """
     if whisper is None:
         raise RuntimeError("Install openai-whisper")
     path = Path(audio_path)
@@ -266,13 +252,11 @@ def run_module_c(
     audio_path: str,
     config: Optional[dict] = None,
 ) -> Dict[str, Any]:
-    cfg = (config or {}).get("whisper", {})
+    whisper_opts = (config or {}).get("whisper", {})
+    model_size = str(whisper_opts.get("model_size", "base"))
     out: Dict[str, Any] = {"speech_text": "", "error": None}
     try:
-        out["speech_text"] = transcribe_audio(
-            audio_path,
-            model_size=str(cfg.get("model_size", "base")),
-        )
+        out["speech_text"] = transcribe_audio(audio_path, model_size=model_size)
     except Exception as e:
         out["error"] = str(e)
         logger.exception("run_module_c")

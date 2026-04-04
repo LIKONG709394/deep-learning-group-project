@@ -1,14 +1,4 @@
-"""
-Start local web + Cloudflare quick tunnel (public HTTPS URL without router port-forward).
-
-Prerequisite: cloudflared (e.g. winget install Cloudflare.cloudflared).
-
-Usage (from classroom_blackboard_analytics):
-  python scripts/run_web_public_tunnel.py
-  python scripts/run_web_public_tunnel.py --port 8766
-
-Web listens on 127.0.0.1; cloudflared forwards. Ctrl+C stops both.
-"""
+# run_web on 127.0.0.1 + cloudflared tunnel; needs cloudflared on PATH
 
 from __future__ import annotations
 
@@ -39,7 +29,7 @@ def _wait_port(host: str, port: int, timeout: float = 30.0) -> bool:
 def main() -> None:
     os.chdir(ROOT)
 
-    p = argparse.ArgumentParser(description="Web + Cloudflare quick tunnel")
+    p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=int(os.environ.get("BLACKBOARD_WEB_PORT", "8766")))
     args = p.parse_args()
     port = args.port
