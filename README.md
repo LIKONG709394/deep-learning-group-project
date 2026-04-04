@@ -46,20 +46,3 @@ Open `http://127.0.0.1:8766`. Bind `0.0.0.0` by default for LAN access; use `--l
 python scripts/run_web_public_tunnel.py
 ```
 
-## GitHub
-
-Create an empty repository on GitHub, then:
-
-```bash
-cd classroom_blackboard_analytics
-git init
-git add .
-git commit -m "Initial commit: classroom blackboard analytics"
-git branch -M main
-git remote add origin https://github.com/YOUR_USER/YOUR_REPO.git
-git push -u origin main
-```
-
-## License
-
-Use and modify as needed for your course or research.
