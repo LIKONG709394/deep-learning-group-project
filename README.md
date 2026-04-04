@@ -37,7 +37,7 @@ python scripts/run_analysis.py --image frame.jpg --audio clip.mp3 --pdf output/r
 python scripts/run_web.py
 ```
 
-Open `http://127.0.0.1:8766`. Bind `0.0.0.0` by default for LAN access; use `--local` for localhost only.
+Open `http://127.0.0.1:8766`. Bind `0.0.0.0` by default for LAN access; use `--local` for localhost only. The web UI always uses built-in defaults; pass `--config` to the CLI if you need a custom YAML.
 
 ### Public HTTPS (Cloudflare quick tunnel)
 

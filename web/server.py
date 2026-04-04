@@ -14,11 +14,10 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import cv2
 import numpy as np
-import yaml
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +75,6 @@ app.add_middleware(
 async def api_analyze(
     image: UploadFile = File(..., description="Blackboard frame (JPG/PNG)"),
     audio: UploadFile = File(..., description="MP3 only (ffmpeg on PATH)"),
-    config_yaml: Optional[UploadFile] = File(None),
 ) -> JSONResponse:
     _cleanup_sessions()
     img_bytes = await image.read()
@@ -89,14 +87,6 @@ async def api_analyze(
     aud_name = audio.filename or ""
     if Path(aud_name).suffix.lower() != ".mp3":
         raise HTTPException(400, "Audio must be MP3 (.mp3 extension)")
-
-    cfg = None
-    if config_yaml is not None and config_yaml.filename:
-        raw = await config_yaml.read()
-        try:
-            cfg = yaml.safe_load(raw.decode("utf-8"))
-        except Exception as e:
-            raise HTTPException(400, f"Invalid YAML config: {e}") from e
 
     workdir = ROOT / "web_uploads" / uuid.uuid4().hex
     workdir.mkdir(parents=True, exist_ok=True)
@@ -117,7 +107,7 @@ async def api_analyze(
         result = run_from_frame_and_audio(
             frame,
             str(aud_path),
-            config=cfg,
+            config=None,
             pdf_output=str(pdf_path),
         )
     except Exception as e:

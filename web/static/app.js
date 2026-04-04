@@ -3,10 +3,8 @@
 
   const imageInput = $("imageInput");
   const audioInput = $("audioInput");
-  const configInput = $("configInput");
   const imageName = $("imageName");
   const audioName = $("audioName");
-  const configName = $("configName");
   const runBtn = $("runBtn");
   const dropZone = $("dropZone");
   const statusCard = $("statusCard");
@@ -63,10 +61,6 @@
     }
     setFileName(audioName, f, "None");
   });
-  configInput.addEventListener("change", () =>
-    setFileName(configName, configInput.files[0], "Default")
-  );
-
   ["dragenter", "dragover"].forEach((ev) => {
     dropZone.addEventListener(ev, (e) => {
       e.preventDefault();
@@ -212,8 +206,6 @@
     const fd = new FormData();
     fd.append("image", imgF);
     fd.append("audio", audF);
-    const cfgF = configInput.files[0];
-    if (cfgF) fd.append("config_yaml", cfgF);
 
     try {
       const res = await fetch("/api/analyze", {
