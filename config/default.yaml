@@ -1,0 +1,26 @@
+# YOLO: without custom blackboard weights, falls back to full-frame or contour heuristic
+yolo:
+  weights_path: null # e.g. "weights/blackboard_yolov8.pt"
+  conf: 0.25
+  iou: 0.45
+  blackboard_class_id: 0 # class index for blackboard in your trained model
+
+trocr:
+  model_name: "microsoft/trocr-base-handwritten"
+
+whisper:
+  model_size: "base"
+
+sbert:
+  model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+clarity:
+  # Laplacian variance (higher = sharper; tune for resolution)
+  laplacian_clear_min: 120.0
+  laplacian_messy_max: 40.0
+  stroke_variance_messy_min: 8.0
+
+semantic:
+  high_match_min: 0.72
+  partial_min: 0.45
+  keyword_overlap_high: 0.35
