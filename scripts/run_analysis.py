@@ -12,9 +12,9 @@ _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import yaml
+import yaml  # noqa: E402
 
-from blackboard_analytics.pipeline import run_from_image_and_audio_files, run_from_video_file
+from blackboard_analytics.pipeline import run_from_image_and_audio_files, run_from_video_file  # noqa: E402
 
 
 def main() -> None:

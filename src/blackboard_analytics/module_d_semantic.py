@@ -127,7 +127,7 @@ def compare_board_and_speech(
     sbert = aligner or SemanticAligner(model_name)
     try:
         cosine_similarity = sbert.similarity(board_text, speech_text)
-    except Exception as e:
+    except Exception:
         logger.exception("SBERT similarity")
         raise
     token_overlap = keyword_overlap_rate(board_text, speech_text)

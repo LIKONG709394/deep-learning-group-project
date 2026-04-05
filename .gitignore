@@ -11,3 +11,7 @@ web_uploads/*
 !web_uploads/.gitkeep
 *.log
 .DS_Store
+
+# YOLO-World / Ultralytics weights (large; downloaded automatically on first run)
+yolov8*.pt
+*.pt

@@ -29,8 +29,15 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from blackboard_analytics.pipeline import run_from_frame_and_audio, run_from_video_file
+from blackboard_analytics.config_loader import default_config_path, load_pipeline_config  # noqa: E402
+from blackboard_analytics.pipeline import run_from_frame_and_audio, run_from_video_file  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Web UI previously passed config=None, so default.yaml (e.g. whisper.language) was ignored.
+_PIPELINE_CONFIG = load_pipeline_config()
+if not _PIPELINE_CONFIG:
+    logger.warning("Pipeline YAML missing or empty; using built-in defaults only (%s)", default_config_path())
 
 # After an hour we forget the session and delete the temp folder so old uploads don’t pile up.
 PDF_TTL_SEC = 3600
@@ -115,6 +122,7 @@ async def api_analyze(
             analysis = run_from_video_file(
                 str(path_to_video),
                 config=loaded_config,
+                config=_PIPELINE_CONFIG,
                 pdf_output=str(path_to_pdf),
             )
         else:
@@ -150,6 +158,9 @@ async def api_analyze(
             )
     except HTTPException:
         raise
+                config=_PIPELINE_CONFIG,
+                pdf_output=str(path_to_pdf),
+            )
     except Exception as e:
         logger.exception("pipeline")
         raise HTTPException(500, f"Analysis failed: {e}") from e
@@ -187,6 +198,37 @@ async def api_report(session_id: str) -> FileResponse:
 @app.get("/api/health")
 async def health() -> dict:
     return {"ok": True}
+
+
+@app.get("/api/diagnostics")
+async def api_diagnostics() -> Dict[str, Any]:
+    """Quick environment check for debugging (no model load)."""
+
+    def _try(mod: str) -> str:
+        try:
+            __import__(mod)
+            return "ok"
+        except Exception as e:
+            return f"error: {e}"
+
+    video = _PIPELINE_CONFIG.get("video") if isinstance(_PIPELINE_CONFIG.get("video"), dict) else {}
+    return {
+        "ok": True,
+        "python_executable": sys.executable,
+        "default_config_path": str(default_config_path()),
+        "config_yaml_loaded": bool(_PIPELINE_CONFIG),
+        "video_fast_mode": bool(video.get("fast_mode")),
+        "ocr_diagnostics_enabled": bool(video.get("ocr_diagnostics", True)),
+        "optional_imports": {
+            "uvicorn": _try("uvicorn"),
+            "ultralytics": _try("ultralytics"),
+            "whisper": _try("whisper"),
+            "sentence_transformers": _try("sentence_transformers"),
+            "transformers": _try("transformers"),
+            "torch": _try("torch"),
+        },
+        "hint": "After /api/analyze (video), inspect result.ocr_diagnostics for localization vs OCR hints.",
+    }
 
 
 _static = WEB_DIR / "static"

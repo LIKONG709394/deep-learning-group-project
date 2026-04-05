@@ -38,8 +38,11 @@ except ImportError:
     VisionEncoderDecoderModel = None  # type: ignore
 
 
-_TROCR_BUNDLES: dict[str, tuple[Any, Any, Any]] = {}
+_TROCR_BUNDLES: dict[tuple[str, str], tuple[Any, Any, Any]] = {}
 _TROCR_LOCK = threading.Lock()
+
+_YOLO_WORLD_MODELS: dict[tuple[str, tuple[str, ...]], Any] = {}
+_YOLO_WORLD_LOCK = threading.Lock()
 
 
 @dataclass
@@ -130,6 +133,95 @@ def _largest_contour_roi(
     return None
 
 
+def parse_trocr_device_option(raw: Any) -> Optional[str]:
+    """None = auto (CUDA then CPU on failure). 'cpu' / 'cuda' = fixed."""
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if not s or s == "auto":
+        return None
+    if s in ("cpu", "torch.cpu"):
+        return "cpu"
+    if s in ("cuda", "gpu", "torch.cuda"):
+        return "cuda"
+    logger.warning("Unknown trocr.device %r; using auto", raw)
+    return None
+
+
+def _normalize_yolo_world_prompts(raw: Any, *, english_only: bool) -> List[str]:
+    """Build YOLO-World class strings; optional ASCII-only (English/Latin labels)."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = [str(x) for x in raw]
+    else:
+        return []
+    out: List[str] = []
+    for p in items:
+        s = str(p).strip()
+        if not s:
+            continue
+        if english_only and not s.isascii():
+            logger.warning("Skipping non-ASCII YOLO-World prompt (english_only): %r", s[:80])
+            continue
+        out.append(s)
+    return out
+
+
+def _get_yolo_world_model(model_name: str, prompts: List[str]) -> Any:
+    if YOLO is None:
+        raise RuntimeError("ultralytics is not installed")
+    if not prompts:
+        raise ValueError("YOLO-World requires at least one text class")
+    key = (str(model_name), tuple(prompts))
+    with _YOLO_WORLD_LOCK:
+        cached = _YOLO_WORLD_MODELS.get(key)
+        if cached is not None:
+            return cached
+        model = YOLO(str(model_name))
+        model.set_classes(prompts)
+        _YOLO_WORLD_MODELS[key] = model
+        return model
+
+
+def _largest_yolo_world_box(
+    image_bgr: np.ndarray,
+    model_name: str,
+    prompts: List[str],
+    conf: float,
+    iou: float,
+    frame_w: int,
+    frame_h: int,
+) -> Optional[ROIBox]:
+    """Open-vocabulary detections: keep the largest box across all English text classes."""
+    if YOLO is None or not prompts:
+        return None
+    try:
+        model = _get_yolo_world_model(model_name, prompts)
+    except Exception as e:
+        logger.warning("YOLO-World load failed: %s", e)
+        return None
+    try:
+        results = model.predict(source=image_bgr, conf=conf, iou=iou, verbose=False)
+    except Exception as e:
+        logger.warning("YOLO-World predict failed: %s", e)
+        return None
+    if not results or results[0].boxes is None or len(results[0].boxes) == 0:
+        return None
+    boxes = results[0].boxes
+    best: Optional[ROIBox] = None
+    best_area = 0
+    for idx in range(len(boxes)):
+        x1, y1, x2, y2 = map(int, boxes.xyxy[idx].cpu().numpy().ravel())
+        area = max(0, x2 - x1) * max(0, y2 - y1)
+        if area > best_area:
+            best_area = area
+            best = ROIBox(x1, y1, x2, y2).clip(frame_w, frame_h)
+    return best if best_area > 0 else None
+
+
 def _largest_yolo_box_for_class(
     image_bgr: np.ndarray,
     weights_file: Union[str, Path],
@@ -168,8 +260,36 @@ def detect_blackboard_roi(
     conf: float = 0.25,
     iou: float = 0.45,
     blackboard_class_id: int = 0,
+    yolo_world: Optional[dict] = None,
 ) -> Tuple[ROIBox, str]:
     frame_h, frame_w = image_bgr.shape[:2]
+
+    yw = yolo_world if isinstance(yolo_world, dict) else {}
+    if yw.get("enabled"):
+        prompts = _normalize_yolo_world_prompts(
+            yw.get("text_classes") or yw.get("classes"),
+            english_only=bool(yw.get("english_only_prompts", True)),
+        )
+        model_name = str(yw.get("model", "yolov8s-worldv2.pt"))
+        w_conf = float(yw.get("conf", conf))
+        w_iou = float(yw.get("iou", iou))
+        if prompts:
+            try:
+                world_roi = _largest_yolo_world_box(
+                    image_bgr,
+                    model_name,
+                    prompts,
+                    w_conf,
+                    w_iou,
+                    frame_w,
+                    frame_h,
+                )
+                if world_roi is not None:
+                    return world_roi, "yolo_world"
+            except Exception as e:
+                logger.warning("YOLO-World ROI failed, falling back: %s", e)
+        else:
+            logger.warning("YOLO-World enabled but no valid English text_classes; falling back.")
 
     weights_ok = yolo_weights_path and Path(yolo_weights_path).is_file()
     if weights_ok:
@@ -281,41 +401,80 @@ def _pil_line_from_gray(gray_line: np.ndarray, target_h: int = 384) -> Any:
 class TrOCRHandwritingEngine:
     # Models load on first use so importing this file stays light.
 
-    def __init__(self, model_name: str = TROCR_DEFAULT) -> None:
+    def __init__(self, model_name: str = TROCR_DEFAULT, device: Optional[str] = None) -> None:
         self.model_name = model_name
+        # device: None = auto (CUDA if possible, else CPU; OOM on CUDA -> CPU)
+        self._device_pref = device
         self._processor = None
         self._model = None
         self._device = None
+
+    def _try_order(self) -> List[str]:
+        pref = self._device_pref
+        if pref == "cpu":
+            return ["cpu"]
+        if pref == "cuda":
+            if torch is not None and torch.cuda.is_available():
+                return ["cuda"]
+            raise RuntimeError("trocr.device=cuda but CUDA is not available")
+        if torch is not None and torch.cuda.is_available():
+            return ["cuda", "cpu"]
+        return ["cpu"]
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
         if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
             raise RuntimeError("Install torch and transformers")
-        with _TROCR_LOCK:
-            cached = _TROCR_BUNDLES.get(self.model_name)
+
+        order = self._try_order()
+        last_err: Optional[BaseException] = None
+        for dev_name in order:
+            with _TROCR_LOCK:
+                cached = _TROCR_BUNDLES.get((self.model_name, dev_name))
             if cached is not None:
                 self._processor, self._model, self._device = cached
                 return
             try:
                 local_only = has_hf_repo_cache(self.model_name)
-                self._processor = TrOCRProcessor.from_pretrained(
+                processor = TrOCRProcessor.from_pretrained(
                     self.model_name,
                     local_files_only=local_only,
                 )
-                self._model = VisionEncoderDecoderModel.from_pretrained(
+                model = VisionEncoderDecoderModel.from_pretrained(
                     self.model_name,
                     local_files_only=local_only,
                 )
-                self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                self._model.to(self._device)
-                self._model.eval()
-                _TROCR_BUNDLES[self.model_name] = (self._processor, self._model, self._device)
+                device_obj = torch.device(dev_name)
+                model.to(device_obj)
+                model.eval()
+                with _TROCR_LOCK:
+                    _TROCR_BUNDLES[(self.model_name, dev_name)] = (processor, model, device_obj)
+                self._processor = processor
+                self._model = model
+                self._device = device_obj
+                if dev_name == "cpu" and "cuda" in order:
+                    logger.info("TrOCR %s running on CPU (GPU unavailable or OOM during load).", self.model_name)
+                return
             except Exception as e:
-                self._processor = None
-                self._model = None
-                self._device = None
+                last_err = e
+                if dev_name == "cuda" and torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                if self._device_pref is None and dev_name == "cuda":
+                    logger.warning(
+                        "TrOCR CUDA load failed for %s (%s); trying CPU.",
+                        self.model_name,
+                        e,
+                    )
+                    continue
+                if self._device_pref == "cuda":
+                    raise RuntimeError(f"Failed to load TrOCR: {e}") from e
                 raise RuntimeError(f"Failed to load TrOCR: {e}") from e
+
+        raise RuntimeError(f"Failed to load TrOCR: {last_err}") from last_err
 
     def decode_line(self, gray_line: np.ndarray) -> str:
         self._ensure_loaded()
@@ -323,7 +482,8 @@ class TrOCRHandwritingEngine:
         pil = _pil_line_from_gray(gray_line)
         pixel_values = self._processor(images=pil, return_tensors="pt").pixel_values.to(self._device)
         with torch.no_grad():
-            gen_ids = self._model.generate(pixel_values)
+            # Avoid transformers warning about default max_length=21; allow longer board lines.
+            gen_ids = self._model.generate(pixel_values, max_new_tokens=128)
         text = self._processor.batch_decode(gen_ids, skip_special_tokens=True)[0]
         return (text or "").strip()
 
@@ -332,7 +492,9 @@ def recognize_blackboard_handwriting(
     image_bgr: np.ndarray,
     *,
     yolo_weights_path: Optional[Union[str, Path]] = None,
+    yolo_world: Optional[dict] = None,
     trocr_model_name: str = TROCR_DEFAULT,
+    trocr_device: Optional[str] = None,
     conf: float = 0.25,
     iou: float = 0.45,
     blackboard_class_id: int = 0,
@@ -341,17 +503,14 @@ def recognize_blackboard_handwriting(
 ) -> List[str]:
     recognized_lines: List[str] = []
     try:
-        if board_region is None:
-            board_region, how_found = detect_blackboard_roi(
-                image_bgr,
-                yolo_weights_path=yolo_weights_path,
-                conf=conf,
-                iou=iou,
-                blackboard_class_id=blackboard_class_id,
-            )
-        else:
-            board_region = coerce_roi_box(board_region, image_shape=image_bgr.shape)
-            how_found = "provided"
+        board_region, how_found = detect_blackboard_roi(
+            image_bgr,
+            yolo_weights_path=yolo_weights_path,
+            conf=conf,
+            iou=iou,
+            blackboard_class_id=blackboard_class_id,
+            yolo_world=yolo_world,
+        )
         logger.info("Blackboard ROI method: %s", how_found)
 
         assert board_region is not None
@@ -359,6 +518,7 @@ def recognize_blackboard_handwriting(
         recognized_lines = recognize_text_lines_in_image(
             board_crop,
             trocr_model_name=trocr_model_name,
+            trocr_device=trocr_device,
             engine=engine,
         )
     except Exception as e:
@@ -371,6 +531,7 @@ def recognize_text_lines_in_image(
     image_bgr: np.ndarray,
     *,
     trocr_model_name: str = TROCR_DEFAULT,
+    trocr_device: Optional[str] = None,
     engine: Optional[TrOCRHandwritingEngine] = None,
 ) -> List[str]:
     recognized_lines: List[str] = []
@@ -379,7 +540,7 @@ def recognize_text_lines_in_image(
     if not line_spans:
         line_spans = [(0, gray_enhanced.shape[0])]
 
-    reader = engine or TrOCRHandwritingEngine(trocr_model_name)
+    reader = engine or TrOCRHandwritingEngine(trocr_model_name, device=trocr_device)
     for row_top, row_bottom in line_spans:
         line_gray = gray_enhanced[row_top:row_bottom, :]
         if line_gray.size == 0:
@@ -405,6 +566,7 @@ def run_module_a(
 ) -> dict:
     cfg = config or {}
     yolo_opts = cfg.get("yolo", {})
+    yolo_world_opts = cfg.get("yolo_world") if isinstance(cfg.get("yolo_world"), dict) else {}
     trocr_opts = cfg.get("trocr", {})
 
     weights = yolo_opts.get("weights_path")
@@ -412,26 +574,26 @@ def run_module_a(
     det_iou = float(yolo_opts.get("iou", 0.45))
     board_class = int(yolo_opts.get("blackboard_class_id", 0))
     handwriting_model = str(trocr_opts.get("model_name", TROCR_DEFAULT))
+    trocr_dev = parse_trocr_device_option(trocr_opts.get("device", "auto"))
 
     out: dict = {"texts": [], "roi": None, "roi_method": None, "error": None}
     try:
-        if roi_override is None:
-            roi, method = detect_blackboard_roi(
-                image_bgr,
-                yolo_weights_path=weights,
-                conf=det_conf,
-                iou=det_iou,
-                blackboard_class_id=board_class,
-            )
-        else:
-            roi = coerce_roi_box(roi_override, image_shape=image_bgr.shape)
-            method = roi_method_override or "provided"
+        roi, method = detect_blackboard_roi(
+            image_bgr,
+            yolo_weights_path=weights,
+            conf=det_conf,
+            iou=det_iou,
+            blackboard_class_id=board_class,
+            yolo_world=yolo_world_opts,
+        )
         out["roi"] = roi.as_tuple()
         out["roi_method"] = method
         out["texts"] = recognize_blackboard_handwriting(
             image_bgr,
             yolo_weights_path=weights,
+            yolo_world=yolo_world_opts,
             trocr_model_name=handwriting_model,
+            trocr_device=trocr_dev,
             conf=det_conf,
             iou=det_iou,
             blackboard_class_id=board_class,
