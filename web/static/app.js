@@ -2,8 +2,10 @@
 (() => {
   const el = (id) => document.getElementById(id);
   const ui = {
+    video: el("videoInput"),
     image: el("imageInput"),
     audio: el("audioInput"),
+    videoLabel: el("videoName"),
     imageLabel: el("imageName"),
     audioLabel: el("audioName"),
     run: el("runBtn"),
@@ -40,6 +42,23 @@
     return !m || m === "audio/mpeg" || m.includes("mp3") || m.includes("mpeg");
   };
 
+  const videoOk = (f) => {
+    if (!f?.name) return false;
+    return /\.(mp4|mov|avi|mkv)$/i.test(f.name);
+  };
+
+  const clearImageAudio = () => {
+    ui.image.value = "";
+    ui.audio.value = "";
+    showChosen(ui.imageLabel, null, "None");
+    showChosen(ui.audioLabel, null, "None");
+  };
+
+  const clearVideo = () => {
+    ui.video.value = "";
+    showChosen(ui.videoLabel, null, "None");
+  };
+
   const row = (parent, label, value) => {
     if (value === undefined || value === null || value === "") return;
     const d = document.createElement("div");
@@ -48,9 +67,21 @@
     parent.appendChild(d);
   };
 
-  ui.image.addEventListener("change", () =>
-    showChosen(ui.imageLabel, ui.image.files[0], "None")
-  );
+  ui.video.addEventListener("change", () => {
+    const f = ui.video.files[0];
+    if (f && !videoOk(f)) {
+      clearVideo();
+      alert("Video must be MP4, MOV, AVI, or MKV.");
+      return;
+    }
+    if (f) clearImageAudio();
+    showChosen(ui.videoLabel, f, "None");
+  });
+  ui.image.addEventListener("change", () => {
+    const f = ui.image.files[0];
+    if (f) clearVideo();
+    showChosen(ui.imageLabel, f, "None");
+  });
   ui.audio.addEventListener("change", () => {
     const f = ui.audio.files[0];
     if (f && !mp3Ok(f)) {
@@ -59,6 +90,7 @@
       alert("Audio must be MP3 (.mp3).");
       return;
     }
+    if (f) clearVideo();
     showChosen(ui.audioLabel, f, "None");
   });
 
@@ -76,12 +108,19 @@
 
   ui.zone.addEventListener("drop", (e) => {
     for (const f of Array.from(e.dataTransfer.files || [])) {
-      if (f.type.startsWith("image/") && !ui.image.files.length) {
+      if (videoOk(f)) {
+        const dt = new DataTransfer();
+        dt.items.add(f);
+        clearImageAudio();
+        ui.video.files = dt.files;
+        showChosen(ui.videoLabel, f, "None");
+        break;
+      } else if (f.type.startsWith("image/") && !ui.image.files.length && !ui.video.files.length) {
         const dt = new DataTransfer();
         dt.items.add(f);
         ui.image.files = dt.files;
         showChosen(ui.imageLabel, f, "None");
-      } else if (mp3Ok(f) && !ui.audio.files.length) {
+      } else if (mp3Ok(f) && !ui.audio.files.length && !ui.video.files.length) {
         const dt = new DataTransfer();
         dt.items.add(f);
         ui.audio.files = dt.files;
@@ -160,15 +199,23 @@
   };
 
   ui.run.addEventListener("click", async () => {
+    const vid = ui.video.files[0];
     const img = ui.image.files[0];
     const aud = ui.audio.files[0];
-    if (!img || !aud) {
-      alert("Select both a blackboard image and an MP3 file.");
-      return;
-    }
-    if (!mp3Ok(aud)) {
-      alert("Audio must be MP3 (.mp3).");
-      return;
+    if (vid) {
+      if (!videoOk(vid)) {
+        alert("Video must be MP4, MOV, AVI, or MKV.");
+        return;
+      }
+    } else {
+      if (!img || !aud) {
+        alert("Select one video file, or select both a blackboard image and an MP3 file.");
+        return;
+      }
+      if (!mp3Ok(aud)) {
+        alert("Audio must be MP3 (.mp3).");
+        return;
+      }
     }
 
     ui.run.disabled = true;
@@ -176,8 +223,12 @@
     setBusy(true, "Running… First run may download models and take several minutes.");
 
     const fd = new FormData();
-    fd.append("image", img);
-    fd.append("audio", aud);
+    if (vid) {
+      fd.append("video", vid);
+    } else {
+      fd.append("image", img);
+      fd.append("audio", aud);
+    }
 
     try {
       const res = await fetch("/api/analyze", { method: "POST", body: fd });

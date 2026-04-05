@@ -7,6 +7,8 @@ yolo:
 
 trocr:
   model_name: "microsoft/trocr-base-handwritten"
+  printed_model_name: "microsoft/trocr-base-printed"
+  video_enable_printed_fallback: true
 
 whisper:
   model_size: "base"
@@ -17,6 +19,13 @@ whisper:
   max_segment_sec: 20.0
   analysis_window_sec: 0.1
   skip_energy_threshold: 0.00012
+
+video:
+  sample_every_sec: 2.0
+  min_change_ratio: 0.02
+  min_keyframe_score: 45.0
+  max_keyframes: 8
+  min_roi_area_ratio: 0.35
 
 sbert:
   model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

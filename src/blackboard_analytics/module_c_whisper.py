@@ -9,11 +9,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import wave
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from blackboard_analytics.model_cache import ensure_project_model_cache_dirs, get_whisper_cache_dir
+
 logger = logging.getLogger(__name__)
+ensure_project_model_cache_dirs()
 
 try:
     import numpy as np
@@ -31,6 +35,9 @@ _FFMPEG_HINT = (
     "or (2) set environment variable FFMPEG_PATH to the full path of ffmpeg.exe, e.g. "
     "C:\\\\Program Files\\\\ffmpeg\\\\bin\\\\ffmpeg.exe, then restart the app."
 )
+
+_WHISPER_MODELS: Dict[str, Any] = {}
+_WHISPER_LOCK = threading.Lock()
 
 
 def _find_ffmpeg_executable() -> Optional[str]:
@@ -367,10 +374,16 @@ def _fixed_size_segments(
 def _load_whisper_model(model_size: str) -> Any:
     if whisper is None:
         raise RuntimeError("Install openai-whisper")
-    try:
-        return whisper.load_model(model_size)
-    except Exception as e:
-        raise RuntimeError(f"Failed to load Whisper model: {e}") from e
+    with _WHISPER_LOCK:
+        cached = _WHISPER_MODELS.get(model_size)
+        if cached is not None:
+            return cached
+        try:
+            model = whisper.load_model(model_size, download_root=str(get_whisper_cache_dir()))
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Whisper model: {e}") from e
+        _WHISPER_MODELS[model_size] = model
+        return model
 
 
 def _transcribe_with_model(

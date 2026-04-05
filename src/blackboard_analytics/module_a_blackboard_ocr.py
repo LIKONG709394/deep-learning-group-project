@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union
@@ -12,9 +13,16 @@ from typing import Any, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+from blackboard_analytics.model_cache import (
+    ensure_project_model_cache_dirs,
+    has_hf_repo_cache,
+)
+
 logger = logging.getLogger(__name__)
+ensure_project_model_cache_dirs()
 
 TROCR_DEFAULT = "microsoft/trocr-base-handwritten"
+TROCR_PRINTED = "microsoft/trocr-base-printed"
 
 try:
     from ultralytics import YOLO
@@ -28,6 +36,10 @@ except ImportError:
     torch = None  # type: ignore
     TrOCRProcessor = None  # type: ignore
     VisionEncoderDecoderModel = None  # type: ignore
+
+
+_TROCR_BUNDLES: dict[str, tuple[Any, Any, Any]] = {}
+_TROCR_LOCK = threading.Lock()
 
 
 @dataclass
@@ -253,16 +265,30 @@ class TrOCRHandwritingEngine:
             return
         if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
             raise RuntimeError("Install torch and transformers")
-        try:
-            self._processor = TrOCRProcessor.from_pretrained(self.model_name)
-            self._model = VisionEncoderDecoderModel.from_pretrained(self.model_name)
-            self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self._model.to(self._device)
-            self._model.eval()
-        except Exception as e:
-            self._processor = None
-            self._model = None
-            raise RuntimeError(f"Failed to load TrOCR: {e}") from e
+        with _TROCR_LOCK:
+            cached = _TROCR_BUNDLES.get(self.model_name)
+            if cached is not None:
+                self._processor, self._model, self._device = cached
+                return
+            try:
+                local_only = has_hf_repo_cache(self.model_name)
+                self._processor = TrOCRProcessor.from_pretrained(
+                    self.model_name,
+                    local_files_only=local_only,
+                )
+                self._model = VisionEncoderDecoderModel.from_pretrained(
+                    self.model_name,
+                    local_files_only=local_only,
+                )
+                self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                self._model.to(self._device)
+                self._model.eval()
+                _TROCR_BUNDLES[self.model_name] = (self._processor, self._model, self._device)
+            except Exception as e:
+                self._processor = None
+                self._model = None
+                self._device = None
+                raise RuntimeError(f"Failed to load TrOCR: {e}") from e
 
     def decode_line(self, gray_line: np.ndarray) -> str:
         self._ensure_loaded()
@@ -297,27 +323,42 @@ def recognize_blackboard_handwriting(
         logger.info("Blackboard ROI method: %s", how_found)
 
         board_crop = crop_roi(image_bgr, board_region)
-        gray_enhanced, ink_for_lines = preprocess_image(board_crop)
-        line_spans = segment_text_lines(ink_for_lines)
-        if not line_spans:
-            line_spans = [(0, gray_enhanced.shape[0])]
-
-        reader = engine or TrOCRHandwritingEngine(trocr_model_name)
-        for row_top, row_bottom in line_spans:
-            line_gray = gray_enhanced[row_top:row_bottom, :]
-            if line_gray.size == 0:
-                continue
-            if (line_gray > 0).sum() < 50:
-                continue
-            try:
-                line_text = reader.decode_line(line_gray)
-                if line_text:
-                    recognized_lines.append(line_text)
-            except Exception as e:
-                logger.warning("Line OCR failed (skipped): %s", e)
+        recognized_lines = recognize_text_lines_in_image(
+            board_crop,
+            trocr_model_name=trocr_model_name,
+            engine=engine,
+        )
     except Exception as e:
         logger.error("Blackboard OCR pipeline failed: %s", e)
         raise
+    return recognized_lines
+
+
+def recognize_text_lines_in_image(
+    image_bgr: np.ndarray,
+    *,
+    trocr_model_name: str = TROCR_DEFAULT,
+    engine: Optional[TrOCRHandwritingEngine] = None,
+) -> List[str]:
+    recognized_lines: List[str] = []
+    gray_enhanced, ink_for_lines = preprocess_image(image_bgr)
+    line_spans = segment_text_lines(ink_for_lines)
+    if not line_spans:
+        line_spans = [(0, gray_enhanced.shape[0])]
+
+    reader = engine or TrOCRHandwritingEngine(trocr_model_name)
+    for row_top, row_bottom in line_spans:
+        line_gray = gray_enhanced[row_top:row_bottom, :]
+        if line_gray.size == 0:
+            continue
+        if (line_gray > 0).sum() < 50:
+            continue
+        try:
+            line_text = reader.decode_line(line_gray)
+            if line_text:
+                recognized_lines.append(line_text)
+        except Exception as e:
+            logger.warning("Line OCR failed (skipped): %s", e)
     return recognized_lines
 
 

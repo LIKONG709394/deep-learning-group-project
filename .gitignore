@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.model_cache/
 web_uploads/*
 !web_uploads/.gitkeep
 *.log

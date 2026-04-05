@@ -7,12 +7,14 @@ Python pipeline and small web UI for:
 - **Module C**: Speech-to-text (OpenAI Whisper) with pause/silence-based segmentation; **MP3 requires ffmpeg**
 - **Module D**: Board vs speech semantic similarity (multilingual SBERT) + keyword overlap + Deepseek Analyse
 - **Module E**: PDF report
+- Minimal video path: extract audio with ffmpeg, sample keyframes, keep only clear frames with meaningful blackboard changes, then reuse OCR + Whisper
 
 ## Requirements
 
 - Python 3.10+
 - [ffmpeg](https://ffmpeg.org/) on `PATH` for MP3 (e.g. `winget install Gyan.FFmpeg`)
 - GPU optional (CPU works, slower)
+- Model downloads are cached in project-local `.model_cache/` after the first run
 
 ## Install
 
@@ -29,6 +31,10 @@ pip install -e .
 
 ```bash
 python scripts/run_analysis.py --image frame.jpg --audio clip.mp3 --pdf output/report.pdf --config config/default.yaml
+```
+
+```bash
+python scripts/run_analysis.py --video lesson.mp4 --pdf output/report.pdf --config config/default.yaml
 ```
 
 ## Web UI

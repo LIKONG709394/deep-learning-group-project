@@ -121,6 +121,14 @@ h1 {
   gap: 0.75rem;
 }
 
+.input-divider {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .file-label {
   display: grid;
   grid-template-columns: 1fr auto;
