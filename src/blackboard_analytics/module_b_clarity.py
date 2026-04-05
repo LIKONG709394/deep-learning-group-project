@@ -11,13 +11,6 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-try:
-    import matplotlib.pyplot as plt
-    from matplotlib import cm
-except ImportError:
-    plt = None  # type: ignore
-    cm = None  # type: ignore
-
 
 def laplacian_variance(gray: np.ndarray) -> float:
     if gray is None or gray.size == 0:
@@ -128,60 +121,6 @@ def evaluate_handwriting_clarity(
         "stroke_width_variance": stroke_width_variance,
         "details": {"num_stroke_components": len(stroke_widths)},
     }
-
-
-def clarity_heatmap_data(
-    gray: np.ndarray,
-    grid_rows: int = 24,
-    grid_cols: int = 32,
-) -> Tuple[np.ndarray, np.ndarray]:
-    if len(gray.shape) == 3:
-        gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape[:2]
-    cell_h = max(1, h // grid_rows)
-    cell_w = max(1, w // grid_cols)
-    heat = np.zeros((grid_rows, grid_cols), dtype=np.float64)
-    for i in range(grid_rows):
-        for j in range(grid_cols):
-            y0, y1 = i * cell_h, min(h, (i + 1) * cell_h)
-            x0, x1 = j * cell_w, min(w, (j + 1) * cell_w)
-            patch = gray[y0:y1, x0:x1]
-            heat[i, j] = laplacian_variance(patch) if patch.size else 0.0
-    return heat, np.array([grid_rows, grid_cols])
-
-
-def plot_clarity_heatmap(
-    image_bgr: np.ndarray,
-    *,
-    grid_rows: int = 24,
-    grid_cols: int = 32,
-    save_path: Optional[str] = None,
-    show: bool = False,
-) -> Optional[Any]:
-    if plt is None or cm is None:
-        logger.warning("matplotlib not installed; skipping heatmap.")
-        return None
-
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY) if len(image_bgr.shape) == 3 else image_bgr
-    heat, _ = clarity_heatmap_data(gray, grid_rows=grid_rows, grid_cols=grid_cols)
-    heat_norm = heat.copy()
-    if heat_norm.max() > heat_norm.min():
-        heat_norm = (heat_norm - heat_norm.min()) / (heat_norm.max() - heat_norm.min() + 1e-8)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].imshow(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
-    axes[0].set_title("Original")
-    axes[0].axis("off")
-    im = axes[1].imshow(heat_norm, cmap="inferno", interpolation="nearest")
-    axes[1].set_title("Clarity heatmap (local Laplacian variance, normalized)")
-    axes[1].axis("off")
-    plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-    plt.tight_layout()
-    if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
-    if show:
-        plt.show()
-    return fig
 
 
 def run_module_b(

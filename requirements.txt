@@ -2,15 +2,20 @@
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
+# torch/torchvision: default PyPI wheels are CPU-only. For NVIDIA GPU (e.g. GTX 1650 on Windows), install CUDA builds first, then the rest:
+#   pip uninstall -y torch torchvision
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Re-running "pip install -r requirements.txt" alone may pull CPU torch again; reinstall from the cu118 index if cuda becomes False.
 torch>=2.0.0
 torchvision>=0.15.0
 
 # Module A
 ultralytics>=8.0.0
+# YOLO-World open-vocabulary text encoder (import name: clip)
+git+https://github.com/ultralytics/CLIP.git
 transformers>=4.36.0
 
-# Module B
-matplotlib>=3.7.0
+# Module B (Whisper wav resample paths also use scipy)
 scipy>=1.11.0
 
 # Module C & D

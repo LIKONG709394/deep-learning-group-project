@@ -1,12 +1,34 @@
-# YOLO: without custom blackboard weights, falls back to full-frame or contour heuristic
+# YOLO: custom trained detector (optional). YOLO-World runs first when enabled.
 yolo:
   weights_path: null # e.g. "weights/blackboard_yolov8.pt"
   conf: 0.25
   iou: 0.45
   blackboard_class_id: 0 # class index for blackboard in your trained model
 
+# YOLO-World: open-vocabulary boxes from English text prompts (Ultralytics; auto-downloads weights).
+yolo_world:
+  enabled: true
+  model: "yolov8s-worldv2.pt"
+  conf: 0.25
+  iou: 0.45
+  # Only keep ASCII prompts so labels stay English/Latin (YOLO-World text encoder is English-centric).
+  english_only_prompts: true
+  # Open-vocabulary zero-shot: tweak these for your footage (no retraining). Default profile: PPT / screencast slides.
+  text_classes:
+    - "presentation slide"
+    - "powerpoint slide"
+    - "projector screen"
+    - "lecture slide on monitor"
+    - "slideshow content area"
+    - "video player content"
+
 trocr:
   model_name: "microsoft/trocr-base-handwritten"
+  printed_model_name: "microsoft/trocr-base-printed"
+  video_enable_printed_fallback: true
+  # auto = try CUDA first, fall back to CPU on OOM (helps 4GB GPUs with YOLO-World on GPU).
+  # cpu = always CPU TrOCR (stable on GTX 1650 4GB; slower). cuda = GPU only (may OOM).
+  device: auto
 
 whisper:
   model_size: "base"
@@ -22,6 +44,42 @@ whisper:
   max_segment_sec: 20.0
   analysis_window_sec: 0.1
   skip_energy_threshold: 0.00012
+
+video:
+  # true = 強制精簡參數（少關鍵幀、關閉 text_harvest 第二遍、較疏 YOLO 掃描）；也可用環境變數 BLACKBOARD_VIDEO_FAST=1
+  fast_mode: true
+  # 與 fast_mode 併用時將 Whisper 改為 tiny（較快、較不準）
+  fast_whisper_tiny: false
+  # yolo_monitor = sequential scan, run YOLO every yolo_monitor_stride_sec (no FFmpeg keyframe extract).
+  # iframe / sampled = legacy pool then same clarity/change filter.
+  keyframe_source: yolo_monitor
+  # Denser scan = more chances to catch new board writing (more GPU/CPU time). fast_mode 會覆寫為較疏。
+  yolo_monitor_stride_sec: 0.25
+  yolo_monitor_max_pool: 220
+  iframe_max_decode: 80
+  sample_every_sec: 2.0
+  min_change_ratio: 0.02
+  min_keyframe_score: 45.0
+  # More frames run through TrOCR, then merged + deduped for board_texts (see board_text_mode).
+  max_keyframes: 28
+  min_roi_area_ratio: 0.35
+  # merged = union OCR lines from all selected keyframes + substring dedupe (fuller board).
+  # best_clarity = only the sharpest single frame.
+  board_text_mode: merged
+  merge_substring_min_len: 8
+  # Extra full-timeline OCR (in addition to keyframes): board ROI + optional full-frame printed OCR.
+  # Long videos: raise text_harvest_max_scans or widen text_harvest_every_sec to control cost.
+  # fast_mode 時會關閉（0）以省時間；設 fast_mode: false 才用下列完整採樣。
+  text_harvest_every_sec: 1.0
+  text_harvest_max_scans: 240
+  text_harvest_full_frame_printed: true
+  full_frame_ocr_max_width: 1280
+  # JSON 內 ocr_diagnostics：粗分問題在「偵測框」還是「讀字/雜訊來源」
+  ocr_diagnostics: true
+  # 過濾超短、字母太少的行（預設關，避免誤傷板書短詞）
+  filter_noise_board_lines: false
+  noise_line_min_chars: 14
+  noise_line_min_letters: 5
 
 sbert:
   model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

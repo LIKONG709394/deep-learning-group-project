@@ -5,11 +5,18 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from typing import Any, Dict, Optional, Set
 
 import numpy as np
 
+from blackboard_analytics.model_cache import (
+    ensure_project_model_cache_dirs,
+    has_hf_repo_cache,
+)
+
 logger = logging.getLogger(__name__)
+ensure_project_model_cache_dirs()
 
 try:
     from sentence_transformers import SentenceTransformer, util
@@ -18,6 +25,8 @@ except ImportError:
     util = None  # type: ignore
 
 DEFAULT_SBERT = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+_SBERT_MODELS: dict[str, Any] = {}
+_SBERT_LOCK = threading.Lock()
 
 # Verdict rules in plain language:
 # - highly_aligned: meaning is close AND a fair share of words/characters match.
@@ -54,10 +63,20 @@ class SemanticAligner:
             return
         if SentenceTransformer is None:
             raise RuntimeError("Install sentence-transformers")
-        try:
-            self._model = SentenceTransformer(self.model_name)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load SBERT: {e}") from e
+        with _SBERT_LOCK:
+            cached = _SBERT_MODELS.get(self.model_name)
+            if cached is not None:
+                self._model = cached
+                return
+            try:
+                model = SentenceTransformer(
+                    self.model_name,
+                    local_files_only=has_hf_repo_cache(self.model_name),
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to load SBERT: {e}") from e
+            self._model = model
+            _SBERT_MODELS[self.model_name] = model
 
     def similarity(self, text_a: str, text_b: str) -> float:
         self._ensure()
@@ -108,7 +127,7 @@ def compare_board_and_speech(
     sbert = aligner or SemanticAligner(model_name)
     try:
         cosine_similarity = sbert.similarity(board_text, speech_text)
-    except Exception as e:
+    except Exception:
         logger.exception("SBERT similarity")
         raise
     token_overlap = keyword_overlap_rate(board_text, speech_text)

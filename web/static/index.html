@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=2" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -22,8 +22,14 @@
     <section class="card upload-card">
       <h2>Upload</h2>
       <div class="drop-zone" id="dropZone" tabindex="0">
-        <p class="drop-hint">Drag image and audio here, or use the file pickers below</p>
+        <p class="drop-hint">Drag a video here, or drag a blackboard image and aligned audio, or use the file pickers below</p>
         <div class="file-rows">
+          <label class="file-label">
+            <span class="label-text">Video</span>
+            <input type="file" id="videoInput" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,.mp4,.mov,.avi,.mkv" />
+            <span class="file-name" id="videoName">None</span>
+          </label>
+          <div class="input-divider">or keep using the existing image + audio path</div>
           <label class="file-label">
             <span class="label-text">Blackboard image</span>
             <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" />
@@ -37,7 +43,7 @@
         </div>
       </div>
       <button type="button" class="btn primary" id="runBtn">Run analysis</button>
-      <p class="hint">Audio must be MP3. Transcription requires ffmpeg on your system PATH.</p>
+      <p class="hint">Choose either one video file, or one blackboard image plus one MP3. Video/audio extraction and transcription require ffmpeg on your system PATH.</p>
     </section>
 
     <section class="card status-card hidden" id="statusCard">
@@ -88,6 +94,6 @@
     <span>Local service — data stays on your machine</span>
   </footer>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=2"></script>
 </body>
 </html>

@@ -14,7 +14,19 @@ if str(ROOT / "src") not in sys.path:
 
 
 def main() -> None:
-    import uvicorn
+    try:
+        import uvicorn
+    except ModuleNotFoundError:
+        print(
+            "Missing dependency: uvicorn. Use this project's virtualenv and install requirements:\n"
+            f"  cd {ROOT}\n"
+            "  python -m venv .venv\n"
+            "  .venv\\Scripts\\activate          (Windows PowerShell)\n"
+            "  pip install -r requirements.txt\n"
+            f"Current Python: {sys.executable}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     default_host = os.environ.get("BLACKBOARD_WEB_HOST", "0.0.0.0")
     default_port = int(os.environ.get("BLACKBOARD_WEB_PORT", "8766"))
