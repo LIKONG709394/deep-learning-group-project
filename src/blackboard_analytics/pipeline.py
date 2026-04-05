@@ -110,6 +110,7 @@ def run_from_frame_and_audio(
         "roi_method": board_reading.get("roi_method"),
         "clarity": clarity_numbers,
         "speech_text": spoken_transcript.get("speech_text"),
+        "speech_segments": spoken_transcript.get("speech_segments") or [],
         "alignment": alignment_summary,
         "pdf_path": pdf_bundle.get("pdf_path"),
         "errors": problems,

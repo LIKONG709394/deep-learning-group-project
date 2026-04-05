@@ -4,7 +4,7 @@ Python pipeline and small web UI for:
 
 - **Module A**: Blackboard ROI (YOLOv8 optional, heuristic fallback) + handwritten OCR (TrOCR)
 - **Module B**: Clarity score (Laplacian variance + stroke-width variance) + optional heatmap
-- **Module C**: Speech-to-text (OpenAI Whisper); **MP3 requires ffmpeg**
+- **Module C**: Speech-to-text (OpenAI Whisper) with pause/silence-based segmentation; **MP3 requires ffmpeg**
 - **Module D**: Board vs speech semantic similarity (multilingual SBERT) + keyword overlap + Deepseek Analyse
 - **Module E**: PDF report
 

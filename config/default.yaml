@@ -10,6 +10,13 @@ trocr:
 
 whisper:
   model_size: "base"
+  enable_silence_segmentation: true
+  silence_threshold: 0.0004
+  silence_duration_sec: 1.0
+  min_segment_sec: 2.0
+  max_segment_sec: 20.0
+  analysis_window_sec: 0.1
+  skip_energy_threshold: 0.00012
 
 sbert:
   model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
