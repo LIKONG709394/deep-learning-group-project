@@ -530,74 +530,6 @@ def transcribe_audio_with_segments(
     }
 
 
-def transcribe_audio_with_segments(
-    audio_path: str,
-    *,
-    model_size: str = "base",
-    language: Optional[str] = None,
-    task: str = "transcribe",
-    enable_silence_segmentation: bool = True,
-    silence_threshold: float = 0.0004,
-    silence_duration_sec: float = 1.0,
-    min_segment_sec: float = 2.0,
-    max_segment_sec: float = 20.0,
-    analysis_window_sec: float = 0.1,
-    skip_energy_threshold: float = 0.00012,
-) -> Dict[str, Any]:
-    path = Path(audio_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Audio not found: {audio_path}")
-
-    model = _load_whisper_model(model_size)
-
-    if not enable_silence_segmentation:
-        audio_input = _prepare_audio_input(path)
-        result = _transcribe_with_model(model, audio_input, language=language, task=task)
-        speech_text = (result.get("text") or "").strip()
-        speech_segments = _simplify_whisper_segments(result.get("segments") or [])
-        return {
-            "speech_text": speech_text,
-            "speech_segments": speech_segments,
-        }
-
-    audio = _load_audio_as_numpy(path)
-    sample_rate = 16000
-    raw_segments = _segment_audio_by_energy(
-        audio,
-        sample_rate=sample_rate,
-        silence_threshold=silence_threshold,
-        silence_duration_sec=silence_duration_sec,
-        min_segment_sec=min_segment_sec,
-        max_segment_sec=max_segment_sec,
-        analysis_window_sec=analysis_window_sec,
-    )
-    if not raw_segments:
-        raw_segments = _fixed_size_segments(audio, sample_rate=sample_rate, max_segment_sec=max_segment_sec)
-
-    speech_segments: List[Dict[str, Any]] = []
-    for segment_audio, start_sec, duration_sec in raw_segments:
-        if _rms_energy(segment_audio) < float(skip_energy_threshold):
-            continue
-        result = _transcribe_with_model(model, segment_audio, language=language, task=task)
-        text = str(result.get("text") or "").strip()
-        if not text:
-            continue
-        end_sec = start_sec + duration_sec
-        speech_segments.append(
-            {
-                "start_sec": round(float(start_sec), 3),
-                "end_sec": round(float(end_sec), 3),
-                "duration_sec": round(float(duration_sec), 3),
-                "text": text,
-            }
-        )
-
-    return {
-        "speech_text": _speech_text_from_segments(speech_segments),
-        "speech_segments": speech_segments,
-    }
-
-
 def run_module_c(
     audio_path: str,
     config: Optional[dict] = None,
@@ -606,6 +538,7 @@ def run_module_c(
     model_size = str(whisper_opts.get("model_size", "base"))
     lang_raw = whisper_opts.get("language")
     language = None if lang_raw is None else str(lang_raw).strip() or None
+    task = str(whisper_opts.get("task", "transcribe")).strip() or "transcribe"
     ip_raw = whisper_opts.get("initial_prompt")
     initial_prompt = None if ip_raw is None else str(ip_raw).strip() or None
     fp16_opt = whisper_opts.get("fp16")
@@ -616,7 +549,7 @@ def run_module_c(
             audio_path,
             model_size=model_size,
             language=language,
-            task=str(whisper_opts.get("task", "transcribe")),
+            task=task,
             initial_prompt=initial_prompt,
             fp16=fp16,
             enable_silence_segmentation=bool(whisper_opts.get("enable_silence_segmentation", True)),

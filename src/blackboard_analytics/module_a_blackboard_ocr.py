@@ -503,14 +503,18 @@ def recognize_blackboard_handwriting(
 ) -> List[str]:
     recognized_lines: List[str] = []
     try:
-        board_region, how_found = detect_blackboard_roi(
-            image_bgr,
-            yolo_weights_path=yolo_weights_path,
-            conf=conf,
-            iou=iou,
-            blackboard_class_id=blackboard_class_id,
-            yolo_world=yolo_world,
-        )
+        if board_region is None:
+            board_region, how_found = detect_blackboard_roi(
+                image_bgr,
+                yolo_weights_path=yolo_weights_path,
+                conf=conf,
+                iou=iou,
+                blackboard_class_id=blackboard_class_id,
+                yolo_world=yolo_world,
+            )
+        else:
+            board_region = coerce_roi_box(board_region, image_shape=image_bgr.shape)
+            how_found = "provided"
         logger.info("Blackboard ROI method: %s", how_found)
 
         assert board_region is not None
@@ -578,14 +582,18 @@ def run_module_a(
 
     out: dict = {"texts": [], "roi": None, "roi_method": None, "error": None}
     try:
-        roi, method = detect_blackboard_roi(
-            image_bgr,
-            yolo_weights_path=weights,
-            conf=det_conf,
-            iou=det_iou,
-            blackboard_class_id=board_class,
-            yolo_world=yolo_world_opts,
-        )
+        if roi_override is None:
+            roi, method = detect_blackboard_roi(
+                image_bgr,
+                yolo_weights_path=weights,
+                conf=det_conf,
+                iou=det_iou,
+                blackboard_class_id=board_class,
+                yolo_world=yolo_world_opts,
+            )
+        else:
+            roi = coerce_roi_box(roi_override, image_shape=image_bgr.shape)
+            method = roi_method_override or "provided"
         out["roi"] = roi.as_tuple()
         out["roi_method"] = method
         out["texts"] = recognize_blackboard_handwriting(

@@ -1,9 +1,7 @@
 # Small HTTP front-end: browser can send a photo + MP3, or a video file.
-# The current UI still posts photo + MP3; video support is exposed at the backend API layer.
 
 from __future__ import annotations
 
-import copy
 import logging
 import shutil
 import sys
@@ -20,7 +18,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import yaml
 
 WEB_DIR = Path(__file__).resolve().parent
 ROOT = WEB_DIR.parent
@@ -28,22 +25,21 @@ _SRC = ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from blackboard_analytics.pipeline import run_from_frame_and_audio, run_from_video_file
 from blackboard_analytics.config_loader import default_config_path, load_pipeline_config  # noqa: E402
 from blackboard_analytics.pipeline import run_from_frame_and_audio, run_from_video_file  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# Web UI previously passed config=None, so default.yaml (e.g. whisper.language) was ignored.
-_PIPELINE_CONFIG = load_pipeline_config()
-if not _PIPELINE_CONFIG:
-    logger.warning("Pipeline YAML missing or empty; using built-in defaults only (%s)", default_config_path())
-
-# After an hour we forget the session and delete the temp folder so old uploads don’t pile up.
 PDF_TTL_SEC = 3600
 _lock = threading.Lock()
 _pending: Dict[str, Dict[str, Any]] = {}
-DEFAULT_CONFIG_PATH = ROOT / "config" / "default.yaml"
+
+_STARTUP_CONFIG = load_pipeline_config()
+if not _STARTUP_CONFIG:
+    logger.warning(
+        "Pipeline YAML missing or empty; using built-in defaults only (%s)",
+        default_config_path(),
+    )
 
 
 def _expire_old_uploads() -> None:
@@ -72,13 +68,8 @@ def decode_uploaded_photo(file_bytes: bytes) -> np.ndarray:
     return picture
 
 
-def load_default_config() -> dict:
-    if not DEFAULT_CONFIG_PATH.is_file():
-        logger.warning("Default config file not found: %s", DEFAULT_CONFIG_PATH)
-        return {}
-    with open(DEFAULT_CONFIG_PATH, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return copy.deepcopy(data)
+def _load_request_config() -> dict:
+    return load_pipeline_config()
 
 
 app = FastAPI()
@@ -97,7 +88,7 @@ async def api_analyze(
     video: UploadFile | None = File(None),
 ) -> JSONResponse:
     _expire_old_uploads()
-    loaded_config = load_default_config()
+    loaded_config = _load_request_config()
 
     using_video = video is not None
     using_image_audio = image is not None or audio is not None
@@ -106,7 +97,6 @@ async def api_analyze(
     if not using_video and not (image is not None and audio is not None):
         raise HTTPException(400, "Send either video, or image + audio")
 
-    # Each request gets its own folder so two people analyzing at once don’t overwrite each other.
     scratch_dir = ROOT / "web_uploads" / uuid.uuid4().hex
     scratch_dir.mkdir(parents=True, exist_ok=True)
     path_to_pdf = scratch_dir / "report.pdf"
@@ -122,7 +112,6 @@ async def api_analyze(
             analysis = run_from_video_file(
                 str(path_to_video),
                 config=loaded_config,
-                config=_PIPELINE_CONFIG,
                 pdf_output=str(path_to_pdf),
             )
         else:
@@ -141,7 +130,6 @@ async def api_analyze(
             suffix = Path(image.filename or "frame.jpg").suffix or ".jpg"
             path_to_photo = scratch_dir / f"frame{suffix}"
             path_to_mp3 = scratch_dir / "audio.mp3"
-
             path_to_photo.write_bytes(photo_bytes)
             path_to_mp3.write_bytes(sound_bytes)
 
@@ -158,9 +146,6 @@ async def api_analyze(
             )
     except HTTPException:
         raise
-                config=_PIPELINE_CONFIG,
-                pdf_output=str(path_to_pdf),
-            )
     except Exception as e:
         logger.exception("pipeline")
         raise HTTPException(500, f"Analysis failed: {e}") from e
@@ -173,9 +158,7 @@ async def api_analyze(
             "workdir": str(scratch_dir),
         }
 
-    return JSONResponse(
-        content=jsonable_encoder({"session_id": download_id, "result": analysis})
-    )
+    return JSONResponse(content=jsonable_encoder({"session_id": download_id, "result": analysis}))
 
 
 @app.get("/api/report/{session_id}")
@@ -202,8 +185,6 @@ async def health() -> dict:
 
 @app.get("/api/diagnostics")
 async def api_diagnostics() -> Dict[str, Any]:
-    """Quick environment check for debugging (no model load)."""
-
     def _try(mod: str) -> str:
         try:
             __import__(mod)
@@ -211,14 +192,15 @@ async def api_diagnostics() -> Dict[str, Any]:
         except Exception as e:
             return f"error: {e}"
 
-    video = _PIPELINE_CONFIG.get("video") if isinstance(_PIPELINE_CONFIG.get("video"), dict) else {}
+    pipeline_config = load_pipeline_config()
+    video_cfg = pipeline_config.get("video") if isinstance(pipeline_config.get("video"), dict) else {}
     return {
         "ok": True,
         "python_executable": sys.executable,
         "default_config_path": str(default_config_path()),
-        "config_yaml_loaded": bool(_PIPELINE_CONFIG),
-        "video_fast_mode": bool(video.get("fast_mode")),
-        "ocr_diagnostics_enabled": bool(video.get("ocr_diagnostics", True)),
+        "config_yaml_loaded": bool(pipeline_config),
+        "video_fast_mode": bool(video_cfg.get("fast_mode")),
+        "ocr_diagnostics_enabled": bool(video_cfg.get("ocr_diagnostics", True)),
         "optional_imports": {
             "uvicorn": _try("uvicorn"),
             "ultralytics": _try("ultralytics"),
@@ -227,7 +209,7 @@ async def api_diagnostics() -> Dict[str, Any]:
             "transformers": _try("transformers"),
             "torch": _try("torch"),
         },
-        "hint": "After /api/analyze (video), inspect result.ocr_diagnostics for localization vs OCR hints.",
+        "hint": "After /api/analyze (video), inspect result.ocr_diagnostics and result.video_debug_metadata.",
     }
 
 
