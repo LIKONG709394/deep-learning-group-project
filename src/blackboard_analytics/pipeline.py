@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import tempfile
@@ -13,7 +14,15 @@ from typing import Any, Dict, Optional
 import cv2
 import numpy as np
 
-from blackboard_analytics.module_a_blackboard_ocr import TROCR_PRINTED, recognize_text_lines_in_image, run_module_a
+from blackboard_analytics.module_a_blackboard_ocr import (
+    TROCR_DEFAULT,
+    TROCR_PRINTED,
+    TrOCRHandwritingEngine,
+    coerce_roi_box,
+    prepare_ocr_inputs,
+    recognize_text_lines_in_image,
+    run_module_a,
+)
 from blackboard_analytics.module_b_clarity import run_module_b
 from blackboard_analytics.module_c_whisper import run_module_c
 from blackboard_analytics.module_d_semantic import run_module_d
@@ -50,6 +59,49 @@ def _texts_look_low_value(lines: list[str]) -> bool:
     if useful_count == 0:
         return True
     return digit_count >= alpha_count and useful_count <= 12
+
+
+def _resolve_video_debug_dir(
+    video_path: str,
+    pdf_output: str,
+    settings: dict,
+) -> Optional[Path]:
+    video_cfg = settings.get("video", {})
+    if not bool(video_cfg.get("debug_enabled", True)):
+        return None
+    debug_dir = Path(pdf_output).resolve().parent / f"{Path(video_path).stem}_video_debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    return debug_dir
+
+
+def _write_debug_image(path: Path, image: np.ndarray) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), image):
+        raise RuntimeError(f"Failed to save debug image: {path}")
+    return str(path.resolve())
+
+
+def _save_video_debug_assets(
+    *,
+    debug_dir: Optional[Path],
+    keyframe_idx: int,
+    frame_bgr: np.ndarray,
+    roi_tuple: tuple[int, int, int, int],
+    ocr_input_bgr: np.ndarray,
+    ocr_mask: np.ndarray,
+) -> Dict[str, str]:
+    if debug_dir is None:
+        return {}
+    prefix = f"frame_{keyframe_idx:03d}"
+    overlay = frame_bgr.copy()
+    x1, y1, x2, y2 = map(int, roi_tuple)
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 255), 3)
+    return {
+        "full_frame": _write_debug_image(debug_dir / f"{prefix}_full.png", frame_bgr),
+        "roi_overlay": _write_debug_image(debug_dir / f"{prefix}_roi_overlay.png", overlay),
+        "ocr_input": _write_debug_image(debug_dir / f"{prefix}_ocr_input.png", ocr_input_bgr),
+        "ocr_mask": _write_debug_image(debug_dir / f"{prefix}_ocr_mask.png", ocr_mask),
+    }
 
 
 def load_bgr_image(image_path: str) -> np.ndarray:
@@ -166,8 +218,12 @@ def run_from_video_file(
     settings = config or {}
     problems: Dict[str, str] = {}
     trocr_opts = settings.get("trocr", {})
+    handwritten_model = str(trocr_opts.get("model_name", TROCR_DEFAULT))
     printed_fallback_model = str(trocr_opts.get("printed_model_name", TROCR_PRINTED))
     use_video_printed_fallback = bool(trocr_opts.get("video_enable_printed_fallback", True))
+    debug_dir = _resolve_video_debug_dir(video_path, pdf_output, settings)
+    handwritten_engine = TrOCRHandwritingEngine(handwritten_model)
+    printed_engine = TrOCRHandwritingEngine(printed_fallback_model) if use_video_printed_fallback else None
 
     with tempfile.TemporaryDirectory(prefix="blackboard_video_") as tmp_dir:
         extracted_audio = extract_audio_ffmpeg(video_path, str(Path(tmp_dir) / "audio.wav"))
@@ -183,22 +239,36 @@ def run_from_video_file(
         best_roi = None
         best_roi_method = None
         keyframe_results = []
+        debug_metadata: list[dict[str, Any]] = []
 
-        for item in keyframes:
+        for keyframe_idx, item in enumerate(keyframes, start=1):
             frame_bgr = item["frame_bgr"]
-            board_reading = run_module_a(frame_bgr, settings)
+            board_reading = run_module_a(
+                frame_bgr,
+                settings,
+                roi_override=item.get("roi"),
+                roi_method_override=str(item.get("roi_method") or "keyframe_selected"),
+                engine_override=handwritten_engine,
+            )
             if board_reading.get("error") and "module_a" not in problems:
                 problems["module_a"] = board_reading["error"]
 
+            roi_tuple = tuple((board_reading.get("roi") or item.get("roi") or (0, 0, frame_bgr.shape[1], frame_bgr.shape[0])))  # type: ignore[arg-type]
+            roi_box = coerce_roi_box(roi_tuple, image_shape=frame_bgr.shape)
+            ocr_input_bgr, _, ocr_mask = prepare_ocr_inputs(frame_bgr, roi_box)
+
             texts = board_reading.get("texts") or []
+            fallback_used = False
             if use_video_printed_fallback and _texts_look_low_value(texts):
                 try:
                     fallback_texts = recognize_text_lines_in_image(
-                        frame_bgr,
+                        ocr_input_bgr,
                         trocr_model_name=printed_fallback_model,
+                        engine=printed_engine,
                     )
                     if fallback_texts and not _texts_look_low_value(fallback_texts):
                         texts = fallback_texts
+                        fallback_used = True
                 except Exception as e:
                     logger.warning("Printed OCR fallback failed on video keyframe: %s", e)
             aggregated_board_lines = _merge_unique_lines(aggregated_board_lines, texts)
@@ -209,16 +279,28 @@ def run_from_video_file(
                 best_roi = board_reading.get("roi") or item.get("roi")
                 best_roi_method = board_reading.get("roi_method") or item.get("roi_method")
 
+            debug_paths = _save_video_debug_assets(
+                debug_dir=debug_dir,
+                keyframe_idx=keyframe_idx,
+                frame_bgr=frame_bgr,
+                roi_tuple=roi_box.as_tuple(),
+                ocr_input_bgr=ocr_input_bgr,
+                ocr_mask=ocr_mask,
+            )
             keyframe_results.append(
                 {
+                    "frame_index": item.get("frame_index"),
                     "timestamp_sec": item.get("timestamp_sec"),
                     "change_ratio": item.get("change_ratio"),
                     "clarity": clarity_result,
-                    "roi": board_reading.get("roi") or item.get("roi"),
+                    "roi": roi_box.as_tuple(),
                     "roi_method": board_reading.get("roi_method") or item.get("roi_method"),
                     "board_texts": texts,
+                    "printed_fallback_used": fallback_used,
+                    "debug_paths": debug_paths or None,
                 }
             )
+            debug_metadata.append(keyframe_results[-1])
 
         spoken_transcript = run_module_c(extracted_audio, settings)
         if spoken_transcript.get("error"):
@@ -243,6 +325,23 @@ def run_from_video_file(
         if pdf_bundle.get("error"):
             problems["module_e"] = pdf_bundle["error"]
 
+    metadata_path = None
+    if debug_dir is not None:
+        metadata_path = debug_dir / "metadata.json"
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "video_path": str(Path(video_path).resolve()),
+                    "pdf_output": str(Path(pdf_output).resolve()),
+                    "debug_dir": str(debug_dir.resolve()),
+                    "keyframes": debug_metadata,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
     return {
         "input_mode": "video",
         "board_texts": aggregated_board_lines,
@@ -255,4 +354,6 @@ def run_from_video_file(
         "pdf_path": pdf_bundle.get("pdf_path"),
         "errors": problems,
         "video_keyframes": keyframe_results,
+        "video_debug_dir": str(debug_dir.resolve()) if debug_dir is not None else None,
+        "video_debug_metadata": str(metadata_path.resolve()) if metadata_path is not None else None,
     }

@@ -528,13 +528,17 @@ def run_module_c(
 ) -> Dict[str, Any]:
     whisper_opts = (config or {}).get("whisper", {})
     model_size = str(whisper_opts.get("model_size", "base"))
+    language_raw = whisper_opts.get("language")
+    language = str(language_raw).strip() if language_raw is not None else None
+    language = language or None
+    task = str(whisper_opts.get("task", "transcribe")).strip() or "transcribe"
     out: Dict[str, Any] = {"speech_text": "", "speech_segments": [], "error": None}
     try:
         result = transcribe_audio_with_segments(
             audio_path,
             model_size=model_size,
-            language=whisper_opts.get("language"),
-            task=str(whisper_opts.get("task", "transcribe")),
+            language=language,
+            task=task,
             enable_silence_segmentation=bool(whisper_opts.get("enable_silence_segmentation", True)),
             silence_threshold=float(whisper_opts.get("silence_threshold", 0.0004)),
             silence_duration_sec=float(whisper_opts.get("silence_duration_sec", 1.0)),

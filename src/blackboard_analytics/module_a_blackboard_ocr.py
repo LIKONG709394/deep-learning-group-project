@@ -61,6 +61,23 @@ class ROIBox:
         return (self.x1, self.y1, self.x2, self.y2)
 
 
+def coerce_roi_box(
+    roi: Union["ROIBox", Tuple[int, int, int, int], List[int]],
+    *,
+    image_shape: Optional[Tuple[int, ...]] = None,
+) -> "ROIBox":
+    if isinstance(roi, ROIBox):
+        box = roi
+    else:
+        if len(roi) != 4:
+            raise ValueError("ROI tuple/list must contain four integers")
+        box = ROIBox(*map(int, roi))
+    if image_shape is None:
+        return box
+    h, w = image_shape[:2]
+    return box.clip(w, h)
+
+
 def preprocess_image(
     image_bgr: np.ndarray,
     *,
@@ -193,6 +210,16 @@ def crop_roi(image: np.ndarray, roi: ROIBox) -> np.ndarray:
     return image[y1:y2, x1:x2].copy()
 
 
+def prepare_ocr_inputs(
+    image_bgr: np.ndarray,
+    roi: Union[ROIBox, Tuple[int, int, int, int], List[int]],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    roi_box = coerce_roi_box(roi, image_shape=image_bgr.shape)
+    board_crop = crop_roi(image_bgr, roi_box)
+    gray_enhanced, ink_for_lines = preprocess_image(board_crop)
+    return board_crop, gray_enhanced, ink_for_lines
+
+
 def segment_text_lines(
     binary_inv_roi: np.ndarray,
     *,
@@ -310,18 +337,24 @@ def recognize_blackboard_handwriting(
     iou: float = 0.45,
     blackboard_class_id: int = 0,
     engine: Optional[TrOCRHandwritingEngine] = None,
+    board_region: Optional[Union[ROIBox, Tuple[int, int, int, int], List[int]]] = None,
 ) -> List[str]:
     recognized_lines: List[str] = []
     try:
-        board_region, how_found = detect_blackboard_roi(
-            image_bgr,
-            yolo_weights_path=yolo_weights_path,
-            conf=conf,
-            iou=iou,
-            blackboard_class_id=blackboard_class_id,
-        )
+        if board_region is None:
+            board_region, how_found = detect_blackboard_roi(
+                image_bgr,
+                yolo_weights_path=yolo_weights_path,
+                conf=conf,
+                iou=iou,
+                blackboard_class_id=blackboard_class_id,
+            )
+        else:
+            board_region = coerce_roi_box(board_region, image_shape=image_bgr.shape)
+            how_found = "provided"
         logger.info("Blackboard ROI method: %s", how_found)
 
+        assert board_region is not None
         board_crop = crop_roi(image_bgr, board_region)
         recognized_lines = recognize_text_lines_in_image(
             board_crop,
@@ -365,6 +398,10 @@ def recognize_text_lines_in_image(
 def run_module_a(
     image_bgr: np.ndarray,
     config: Optional[dict] = None,
+    *,
+    roi_override: Optional[Union[ROIBox, Tuple[int, int, int, int], List[int]]] = None,
+    roi_method_override: Optional[str] = None,
+    engine_override: Optional[TrOCRHandwritingEngine] = None,
 ) -> dict:
     cfg = config or {}
     yolo_opts = cfg.get("yolo", {})
@@ -378,13 +415,17 @@ def run_module_a(
 
     out: dict = {"texts": [], "roi": None, "roi_method": None, "error": None}
     try:
-        roi, method = detect_blackboard_roi(
-            image_bgr,
-            yolo_weights_path=weights,
-            conf=det_conf,
-            iou=det_iou,
-            blackboard_class_id=board_class,
-        )
+        if roi_override is None:
+            roi, method = detect_blackboard_roi(
+                image_bgr,
+                yolo_weights_path=weights,
+                conf=det_conf,
+                iou=det_iou,
+                blackboard_class_id=board_class,
+            )
+        else:
+            roi = coerce_roi_box(roi_override, image_shape=image_bgr.shape)
+            method = roi_method_override or "provided"
         out["roi"] = roi.as_tuple()
         out["roi_method"] = method
         out["texts"] = recognize_blackboard_handwriting(
@@ -394,6 +435,8 @@ def run_module_a(
             conf=det_conf,
             iou=det_iou,
             blackboard_class_id=board_class,
+            engine=engine_override,
+            board_region=roi,
         )
     except Exception as e:
         out["error"] = str(e)

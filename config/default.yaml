@@ -12,6 +12,8 @@ trocr:
 
 whisper:
   model_size: "base"
+  language: null
+  task: "transcribe"
   enable_silence_segmentation: true
   silence_threshold: 0.0004
   silence_duration_sec: 1.0
@@ -21,6 +23,7 @@ whisper:
   skip_energy_threshold: 0.00012
 
 video:
+  debug_enabled: true
   sample_every_sec: 2.0
   min_change_ratio: 0.02
   min_keyframe_score: 45.0

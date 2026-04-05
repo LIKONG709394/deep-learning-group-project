@@ -48,6 +48,7 @@ def _sample_video_frames(
             if frame_index % frame_step == 0:
                 sampled.append(
                     {
+                        "frame_index": frame_index,
                         "timestamp_sec": round(_frame_timestamp_sec(capture, frame_index, fps), 3),
                         "frame_bgr": frame,
                     }
@@ -129,6 +130,7 @@ def extract_blackboard_keyframes(
         change_ratio = _change_ratio(previous_signature, signature)
 
         candidate = {
+            "frame_index": sampled.get("frame_index"),
             "timestamp_sec": sampled["timestamp_sec"],
             "frame_bgr": frame_bgr,
             "roi": roi.as_tuple(),

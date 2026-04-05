@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import shutil
 import sys
@@ -19,6 +20,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+import yaml
 
 WEB_DIR = Path(__file__).resolve().parent
 ROOT = WEB_DIR.parent
@@ -34,6 +36,7 @@ logger = logging.getLogger(__name__)
 PDF_TTL_SEC = 3600
 _lock = threading.Lock()
 _pending: Dict[str, Dict[str, Any]] = {}
+DEFAULT_CONFIG_PATH = ROOT / "config" / "default.yaml"
 
 
 def _expire_old_uploads() -> None:
@@ -62,6 +65,15 @@ def decode_uploaded_photo(file_bytes: bytes) -> np.ndarray:
     return picture
 
 
+def load_default_config() -> dict:
+    if not DEFAULT_CONFIG_PATH.is_file():
+        logger.warning("Default config file not found: %s", DEFAULT_CONFIG_PATH)
+        return {}
+    with open(DEFAULT_CONFIG_PATH, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return copy.deepcopy(data)
+
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +90,7 @@ async def api_analyze(
     video: UploadFile | None = File(None),
 ) -> JSONResponse:
     _expire_old_uploads()
+    loaded_config = load_default_config()
 
     using_video = video is not None
     using_image_audio = image is not None or audio is not None
@@ -101,7 +114,7 @@ async def api_analyze(
             path_to_video.write_bytes(video_bytes)
             analysis = run_from_video_file(
                 str(path_to_video),
-                config=None,
+                config=loaded_config,
                 pdf_output=str(path_to_pdf),
             )
         else:
@@ -132,9 +145,11 @@ async def api_analyze(
             analysis = run_from_frame_and_audio(
                 blackboard_frame,
                 str(path_to_mp3),
-                config=None,
+                config=loaded_config,
                 pdf_output=str(path_to_pdf),
             )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("pipeline")
         raise HTTPException(500, f"Analysis failed: {e}") from e
