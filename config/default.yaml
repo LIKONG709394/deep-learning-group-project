@@ -10,6 +10,18 @@ trocr:
 
 whisper:
   model_size: "base"
+  # ISO 639-1 code (e.g. en). Omit or set null for Whisper auto-detect (noisy classroom audio often mis-detects).
+  language: "en"
+  # Nudges decoding toward lecture-style English (helps when audio is noisy).
+  initial_prompt: "English classroom lecture with clear educational vocabulary."
+  # false = one full-file pass (fewer hallucinations on short/noisy chunks than per-segment mode).
+  enable_silence_segmentation: false
+  silence_threshold: 0.0004
+  silence_duration_sec: 1.0
+  min_segment_sec: 2.0
+  max_segment_sec: 20.0
+  analysis_window_sec: 0.1
+  skip_energy_threshold: 0.00012
 
 sbert:
   model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
