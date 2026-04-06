@@ -7,11 +7,22 @@ dist/
 build/
 .pytest_cache/
 .model_cache/
-web_uploads/*
-!web_uploads/.gitkeep
 *.log
 .DS_Store
 
-# YOLO-World / Ultralytics weights (large; downloaded automatically on first run)
-yolov8*.pt
-*.pt
+# Local datasets and uploads
+datasets/
+web_uploads/
+
+# Local demo / debug assets
+demo_data/
+
+# YOLO / Ultralytics training artifacts
+runs/
+
+# Downloaded pretrained checkpoints kept outside versioned models/
+yolo*.pt
+
+# Keep committed final model weights under models/
+!models/
+!models/*.pt

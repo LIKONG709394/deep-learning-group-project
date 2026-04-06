@@ -1,11 +1,11 @@
 yolo:
-  weights_path: null
+  weights_path: "models/text_blackboard_detector_best.pt"
   conf: 0.25
   iou: 0.45
   blackboard_class_id: 0
 
 yolo_world:
-  enabled: true
+  enabled: false
   model: "yolov8s-worldv2.pt"
   conf: 0.25
   iou: 0.45
