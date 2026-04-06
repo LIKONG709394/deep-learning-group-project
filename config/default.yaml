@@ -73,3 +73,11 @@ semantic:
   high_match_min: 0.72
   partial_min: 0.45
   keyword_overlap_high: 0.35
+
+deepseek:
+  enabled: true
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+  api_key_env: "DEEPSEEK_API_KEY"
+  timeout_sec: 30
+  temperature: 0.1

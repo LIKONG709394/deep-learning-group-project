@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=2" />
+  <link rel="stylesheet" href="/style.css?v=3" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -78,6 +78,13 @@
         <div id="alignBox" class="metric-grid"></div>
       </div>
 
+      <div class="result-block">
+        <h3>DeepSeek relevance analysis</h3>
+        <div id="deepseekBox" class="metric-grid"></div>
+        <p id="deepseekReason" class="speech-box hidden"></p>
+        <ul id="deepseekEvidence" class="mono-list hidden"></ul>
+      </div>
+
       <div class="result-block errors hidden" id="errorsBox">
         <h3>Module notes</h3>
         <ul id="errorsList"></ul>
@@ -94,6 +101,6 @@
     <span>Local service — data stays on your machine</span>
   </footer>
 
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

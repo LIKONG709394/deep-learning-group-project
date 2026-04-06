@@ -25,6 +25,7 @@ from blackboard_analytics.module_a_blackboard_ocr import (
 )
 from blackboard_analytics.module_b_clarity import run_module_b
 from blackboard_analytics.module_c_whisper import run_module_c
+from blackboard_analytics.module_d_deepseek import run_module_d_deepseek
 from blackboard_analytics.module_d_semantic import run_module_d
 from blackboard_analytics.module_e_report import run_module_e
 from blackboard_analytics.module_video_keyframes import extract_blackboard_keyframes
@@ -379,6 +380,9 @@ def run_from_frame_and_audio(
     lesson_alignment = run_module_d(board_as_paragraph, speech_text, settings)
     if lesson_alignment.get("error"):
         problems["module_d"] = lesson_alignment["error"]
+    deepseek_alignment = run_module_d_deepseek(board_as_paragraph, speech_text, settings)
+    if deepseek_alignment.get("enabled") and deepseek_alignment.get("error"):
+        problems["module_d_deepseek"] = str(deepseek_alignment["error"])
 
     clarity_numbers = handwriting_clarity.get("clarity_result") or {}
     alignment_summary = lesson_alignment.get("alignment")
@@ -402,6 +406,7 @@ def run_from_frame_and_audio(
         "speech_text": speech_text,
         "speech_segments": spoken_transcript.get("speech_segments") or [],
         "alignment": alignment_summary,
+        "deepseek_alignment": deepseek_alignment,
         "pdf_path": pdf_bundle.get("pdf_path"),
         "errors": problems,
     }
@@ -563,6 +568,9 @@ def run_from_video_file(
         if lesson_alignment.get("error"):
             problems["module_d"] = lesson_alignment["error"]
         alignment_summary = lesson_alignment.get("alignment")
+        deepseek_alignment = run_module_d_deepseek(board_as_paragraph, speech_text, settings)
+        if deepseek_alignment.get("enabled") and deepseek_alignment.get("error"):
+            problems["module_d_deepseek"] = str(deepseek_alignment["error"])
 
         bundle_for_pdf = {
             "board_lines": board_lines_primary,
@@ -603,6 +611,7 @@ def run_from_video_file(
         "speech_text": spoken_transcript.get("speech_text"),
         "speech_segments": spoken_transcript.get("speech_segments") or [],
         "alignment": alignment_summary,
+        "deepseek_alignment": deepseek_alignment,
         "pdf_path": pdf_bundle.get("pdf_path"),
         "errors": problems,
         "video_keyframes": keyframe_results,

@@ -20,6 +20,9 @@
     clarity: el("clarityBox"),
     speech: el("speechText"),
     align: el("alignBox"),
+    deepseek: el("deepseekBox"),
+    deepseekReason: el("deepseekReason"),
+    deepseekEvidence: el("deepseekEvidence"),
     errBox: el("errorsBox"),
     errUl: el("errorsList"),
     json: el("rawJson"),
@@ -29,6 +32,12 @@
     highly_aligned: "Highly aligned",
     partially_related: "Partially related",
     content_mismatch: "Content mismatch",
+  };
+  const deepseekPretty = {
+    highly_relevant: "Highly relevant",
+    partially_relevant: "Partially relevant",
+    weakly_relevant: "Weakly relevant",
+    off_topic: "Off topic",
   };
   const clarityPretty = { clear: "Clear", fair: "Fair", poor: "Poor" };
 
@@ -65,6 +74,46 @@
     d.className = "metric-row";
     d.innerHTML = `<span>${label}</span><strong>${String(value)}</strong>`;
     parent.appendChild(d);
+  };
+
+  const showDeepSeek = (result) => {
+    const d = result || {};
+    ui.deepseek.replaceChildren();
+    ui.deepseekEvidence.replaceChildren();
+    ui.deepseekReason.classList.add("hidden");
+    ui.deepseekEvidence.classList.add("hidden");
+
+    if (!d.enabled) {
+      row(ui.deepseek, "Status", "Not enabled");
+      row(ui.deepseek, "Model", d.model || "deepseek-chat");
+      return;
+    }
+
+    row(ui.deepseek, "Status", d.error ? "Failed" : "Success");
+    row(ui.deepseek, "Model", d.model);
+
+    if (d.error) {
+      row(ui.deepseek, "Error", d.error);
+      return;
+    }
+
+    row(ui.deepseek, "Overall relevance", deepseekPretty[d.overall_relevance] || d.overall_relevance);
+    row(ui.deepseek, "Score", d.score);
+
+    if (d.reason) {
+      ui.deepseekReason.textContent = d.reason;
+      ui.deepseekReason.classList.remove("hidden");
+    }
+
+    const evidence = Array.isArray(d.evidence) ? d.evidence.filter(Boolean) : [];
+    if (evidence.length) {
+      ui.deepseekEvidence.classList.remove("hidden");
+      for (const item of evidence) {
+        const li = document.createElement("li");
+        li.textContent = item;
+        ui.deepseekEvidence.appendChild(li);
+      }
+    }
   };
 
   ui.video.addEventListener("change", () => {
@@ -174,6 +223,8 @@
     row(ui.align, "Semantic similarity", a.semantic_similarity);
     row(ui.align, "Keyword overlap (Jaccard)", a.keyword_overlap_rate);
     row(ui.align, "Verdict", verdictPretty[a.verdict] || a.verdict);
+
+    showDeepSeek(r.deepseek_alignment);
 
     // Pipeline step failures (we still show whatever succeeded)
     const bad = r.errors || {};

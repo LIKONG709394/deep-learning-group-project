@@ -281,6 +281,15 @@ h1 {
   word-break: break-word;
 }
 
+#deepseekReason {
+  margin-top: 0.75rem;
+}
+
+#deepseekEvidence {
+  margin-top: 0.75rem;
+  margin-bottom: 0;
+}
+
 .metric-grid {
   display: grid;
   gap: 0.5rem;
