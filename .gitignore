@@ -1,73 +1,8 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
+# Local environments (may fail to delete while Python holds DLL locks)
 venv/
-ENV/
-env/
-.venv
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# Model files (optional - uncomment if you don't want to commit models)
-# *.h5
-# *.tflite
-# keras_model.h5
-# model_unquant*.tflite
-
-# Environment variables
+.venv/
 .env
-.env.local
-
-# Logs
+.idea/
+__pycache__/
 *.log
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Uploaded files
-uploads/*.tflite
-uploads/*.txt
-!uploads/.gitkeep
-
-# Blackboard web UI temp uploads
-classroom_blackboard_analytics/web_uploads/*
-!classroom_blackboard_analytics/web_uploads/.gitkeep
-
-# macOS
 .DS_Store
-.AppleDouble
-.LSOverride
-
-# Thumbnails
-._*

@@ -13,7 +13,8 @@ build/
 
 # Local datasets and uploads
 datasets/
-web_uploads/
+web_uploads/*
+!web_uploads/.gitkeep
 
 # Local demo / debug assets
 demo_data/
