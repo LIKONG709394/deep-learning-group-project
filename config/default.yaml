@@ -64,6 +64,12 @@ video:
   text_presence_min_components: 8
   text_presence_max_component_ratio: 0.14
   text_presence_max_single_span_height_ratio: 0.42
+  # Earlier gate during keyframe selection: drop obviously non-text frames before OCR.
+  keyframe_text_gate_enabled: true
+  keyframe_text_gate_min_ink_ratio: 0.0025
+  keyframe_text_gate_min_line_spans: 1
+  keyframe_text_gate_min_components: 6
+  keyframe_text_gate_max_component_ratio: 0.18
   keyframe_source: yolo_monitor
   yolo_monitor_stride_sec: 0.25
   yolo_monitor_max_pool: 220

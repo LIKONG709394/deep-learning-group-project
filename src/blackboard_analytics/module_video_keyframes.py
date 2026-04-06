@@ -17,7 +17,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from blackboard_analytics.module_a_blackboard_ocr import ROIBox, crop_roi, detect_blackboard_roi, preprocess_image
+from blackboard_analytics.module_a_blackboard_ocr import (
+    ROIBox,
+    crop_roi,
+    detect_blackboard_roi,
+    preprocess_image,
+    segment_text_lines,
+)
 from blackboard_analytics.module_b_clarity import evaluate_handwriting_clarity
 
 logger = logging.getLogger(__name__)
@@ -379,6 +385,65 @@ def _board_signature(board_crop: np.ndarray, *, size: tuple[int, int] = (160, 90
     return build_content_signature(board_crop, size=size)
 
 
+def _board_looks_text_like(
+    board_crop: np.ndarray,
+    *,
+    min_ink_ratio: float,
+    min_line_spans: int,
+    min_components: int,
+    max_largest_component_ratio: float,
+) -> tuple[bool, dict[str, float | int | str]]:
+    try:
+        _, ink_mask = preprocess_image(board_crop)
+    except Exception:
+        return False, {
+            "reason": "preprocess_failed",
+            "ink_ratio": 0.0,
+            "line_span_count": 0,
+            "component_count": 0,
+            "largest_component_ratio": 0.0,
+        }
+
+    binary = (ink_mask > 0).astype(np.uint8)
+    h, w = binary.shape[:2]
+    area = float(max(1, h * w))
+    ink_ratio = float(binary.sum() / area)
+    line_span_count = len(segment_text_lines(ink_mask))
+
+    component_count = 0
+    largest_component_ratio = 0.0
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    if num_labels > 1:
+        component_areas = stats[1:, cv2.CC_STAT_AREA]
+        component_count = int(component_areas.size)
+        largest_component_ratio = float(np.max(component_areas) / area)
+
+    looks_text = (
+        ink_ratio >= max(0.0, min_ink_ratio)
+        and line_span_count >= max(1, min_line_spans)
+        and component_count >= max(1, min_components)
+        and largest_component_ratio <= max(0.0, max_largest_component_ratio)
+    )
+    if looks_text:
+        reason = "text_like"
+    elif ink_ratio < min_ink_ratio:
+        reason = "too_little_ink"
+    elif line_span_count < min_line_spans:
+        reason = "too_few_line_spans"
+    elif component_count < min_components:
+        reason = "too_few_components"
+    else:
+        reason = "dominant_non_text_blob"
+
+    return looks_text, {
+        "reason": reason,
+        "ink_ratio": round(ink_ratio, 5),
+        "line_span_count": int(line_span_count),
+        "component_count": int(component_count),
+        "largest_component_ratio": round(largest_component_ratio, 5),
+    }
+
+
 def _change_ratio(previous_signature: Optional[np.ndarray], current_signature: np.ndarray) -> float:
     if previous_signature is None:
         return 1.0
@@ -554,9 +619,18 @@ def extract_blackboard_keyframes(
     min_keyframe_score = float(video_cfg.get("min_keyframe_score", 45.0))
     max_keyframes = max(1, int(video_cfg.get("max_keyframes", 8)))
     min_roi_area_ratio = float(video_cfg.get("min_roi_area_ratio", 0.35))
+    keyframe_text_gate_enabled = bool(video_cfg.get("keyframe_text_gate_enabled", True))
+    keyframe_text_gate_min_ink_ratio = max(0.0, float(video_cfg.get("keyframe_text_gate_min_ink_ratio", 0.0025)))
+    keyframe_text_gate_min_line_spans = max(1, int(video_cfg.get("keyframe_text_gate_min_line_spans", 1)))
+    keyframe_text_gate_min_components = max(1, int(video_cfg.get("keyframe_text_gate_min_components", 6)))
+    keyframe_text_gate_max_component_ratio = max(
+        0.0,
+        min(1.0, float(video_cfg.get("keyframe_text_gate_max_component_ratio", 0.18))),
+    )
 
     kept: List[Dict[str, Any]] = []
     best_fallback: Optional[Dict[str, Any]] = None
+    best_any_fallback: Optional[Dict[str, Any]] = None
     previous_signature: Optional[np.ndarray] = None
 
     for sampled in sampled_frames:
@@ -580,6 +654,15 @@ def extract_blackboard_keyframes(
             roi = ROIBox(0, 0, frame_w, frame_h)
             roi_method = "full_frame_video_fallback"
         board_crop = crop_roi(frame_bgr, roi)
+        text_like, text_like_stats = _board_looks_text_like(
+            board_crop,
+            min_ink_ratio=keyframe_text_gate_min_ink_ratio,
+            min_line_spans=keyframe_text_gate_min_line_spans,
+            min_components=keyframe_text_gate_min_components,
+            max_largest_component_ratio=keyframe_text_gate_max_component_ratio,
+        )
+        if keyframe_text_gate_enabled and not text_like:
+            continue
         clarity = evaluate_handwriting_clarity(
             board_crop,
             laplacian_clear_min=float(clarity_cfg.get("laplacian_clear_min", 120.0)),
@@ -597,7 +680,15 @@ def extract_blackboard_keyframes(
             "roi_method": roi_method,
             "clarity_result": clarity,
             "change_ratio": round(change_ratio, 4),
+            "text_gate_reason": text_like_stats.get("reason"),
+            "text_gate_ink_ratio": text_like_stats.get("ink_ratio"),
+            "text_gate_line_spans": text_like_stats.get("line_span_count"),
+            "text_gate_component_count": text_like_stats.get("component_count"),
+            "text_gate_largest_component_ratio": text_like_stats.get("largest_component_ratio"),
         }
+
+        if best_any_fallback is None or clarity.get("score", 0.0) > best_any_fallback["clarity_result"].get("score", 0.0):
+            best_any_fallback = candidate
 
         if best_fallback is None or clarity.get("score", 0.0) > best_fallback["clarity_result"].get("score", 0.0):
             best_fallback = candidate
@@ -616,4 +707,7 @@ def extract_blackboard_keyframes(
     if best_fallback is not None:
         logger.info("No clear-changing keyframe found; falling back to the clearest sampled frame.")
         return [best_fallback]
+    if best_any_fallback is not None:
+        logger.info("All candidate frames failed the text gate; falling back to the clearest sampled frame.")
+        return [best_any_fallback]
     raise RuntimeError(f"No usable keyframe extracted from video: {video_path}")
