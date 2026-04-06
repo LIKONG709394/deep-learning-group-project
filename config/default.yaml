@@ -52,6 +52,11 @@ video:
   # false = more keyframes + text harvest (better for PPT/printed); true = still runs but uses lighter _FAST_VIDEO_PRESET.
   fast_mode: false
   fast_whisper_tiny: false
+  # Reuse the previous OCR result when the ROI/OCR input content is almost identical.
+  dedupe_enabled: true
+  dedupe_similarity_threshold: 0.985
+  dedupe_min_interval_sec: 8.0
+  dedupe_cache_size: 12
   keyframe_source: yolo_monitor
   yolo_monitor_stride_sec: 0.25
   yolo_monitor_max_pool: 220

@@ -30,7 +30,11 @@ from blackboard_analytics.module_c_whisper import run_module_c
 from blackboard_analytics.module_d_deepseek import run_deepseek_filter_board_lines, run_module_d_deepseek
 from blackboard_analytics.module_d_semantic import run_module_d
 from blackboard_analytics.module_e_report import run_module_e
-from blackboard_analytics.module_video_keyframes import extract_blackboard_keyframes
+from blackboard_analytics.module_video_keyframes import (
+    build_content_signature,
+    content_signature_similarity,
+    extract_blackboard_keyframes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +370,57 @@ def _save_video_debug_assets(
     }
 
 
+def _find_reusable_ocr_result(
+    cache: list[dict[str, Any]],
+    *,
+    signature: np.ndarray,
+    timestamp_sec: float,
+    similarity_threshold: float,
+    min_interval_sec: float,
+) -> Optional[dict[str, Any]]:
+    best_match: Optional[dict[str, Any]] = None
+    for entry in reversed(cache):
+        time_gap = abs(float(timestamp_sec) - float(entry.get("timestamp_sec") or 0.0))
+        if min_interval_sec > 0 and time_gap > min_interval_sec:
+            continue
+        similarity = content_signature_similarity(signature, entry.get("signature"))
+        if similarity < similarity_threshold:
+            continue
+        if best_match is None or similarity > float(best_match["similarity"]):
+            best_match = {
+                "frame_index": entry.get("frame_index"),
+                "timestamp_sec": entry.get("timestamp_sec"),
+                "texts": list(entry.get("texts") or []),
+                "ocr_source": entry.get("ocr_source"),
+                "similarity": round(similarity, 4),
+            }
+    return best_match
+
+
+def _append_ocr_cache(
+    cache: list[dict[str, Any]],
+    *,
+    signature: np.ndarray,
+    frame_index: Optional[int],
+    timestamp_sec: float,
+    texts: list[str],
+    ocr_source: str,
+    cache_size: int,
+) -> None:
+    cache.append(
+        {
+            "signature": signature.copy(),
+            "frame_index": frame_index,
+            "timestamp_sec": float(timestamp_sec),
+            "texts": list(texts),
+            "ocr_source": ocr_source,
+        }
+    )
+    overflow = len(cache) - max(1, cache_size)
+    if overflow > 0:
+        del cache[:overflow]
+
+
 def load_bgr_image(image_path: str) -> np.ndarray:
     image = cv2.imread(image_path)
     if image is None:
@@ -497,6 +552,14 @@ def run_from_video_file(
     trocr_device = parse_trocr_device_option(trocr_opts.get("device", "auto"))
     debug_dir = _resolve_video_debug_dir(video_path, pdf_output, settings)
     deepseek_line_filter: Optional[dict[str, Any]] = None
+    dedupe_enabled = bool(video_cfg.get("dedupe_enabled", True))
+    dedupe_similarity_threshold = max(
+        0.0,
+        min(1.0, float(video_cfg.get("dedupe_similarity_threshold", 0.985))),
+    )
+    dedupe_min_interval_sec = max(0.0, float(video_cfg.get("dedupe_min_interval_sec", 8.0)))
+    dedupe_cache_size = max(1, int(video_cfg.get("dedupe_cache_size", 12)))
+    ocr_result_cache: list[dict[str, Any]] = []
 
     with tempfile.TemporaryDirectory(prefix="blackboard_video_") as tmp_dir:
         extracted_audio = extract_audio_ffmpeg(video_path, str(Path(tmp_dir) / "audio.wav"))
@@ -519,65 +582,109 @@ def run_from_video_file(
 
         for keyframe_idx, item in enumerate(keyframes, start=1):
             frame_bgr = item["frame_bgr"]
+            frame_index = item.get("frame_index")
+            frame_timestamp_sec = float(item.get("timestamp_sec") or 0.0)
+            precomputed_roi_box = coerce_roi_box(
+                item.get("roi") or (0, 0, frame_bgr.shape[1], frame_bgr.shape[0]),
+                image_shape=frame_bgr.shape,
+            )
+            ocr_input_bgr, _, ocr_mask = prepare_ocr_inputs(frame_bgr, precomputed_roi_box)
+            content_signature = build_content_signature(ocr_mask)
+            dedupe_match = (
+                _find_reusable_ocr_result(
+                    ocr_result_cache,
+                    signature=content_signature,
+                    timestamp_sec=frame_timestamp_sec,
+                    similarity_threshold=dedupe_similarity_threshold,
+                    min_interval_sec=dedupe_min_interval_sec,
+                )
+                if dedupe_enabled
+                else None
+            )
             if video_prefer_printed:
                 trocr_video = dict(trocr_opts)
                 trocr_video["model_name"] = printed_fallback_model
                 module_a_settings = {**settings, "trocr": trocr_video}
             else:
                 module_a_settings = settings
-            board_reading = run_module_a(frame_bgr, module_a_settings)
-            if board_reading.get("error") and "module_a" not in problems:
-                problems["module_a"] = board_reading["error"]
+            if dedupe_match is not None:
+                board_reading = {
+                    "texts": list(dedupe_match.get("texts") or []),
+                    "roi": precomputed_roi_box.as_tuple(),
+                    "roi_method": str(item.get("roi_method") or "precomputed_roi"),
+                    "error": None,
+                }
+                texts = list(board_reading["texts"])
+                ocr_source = str(dedupe_match.get("ocr_source") or "reused_ocr")
+            else:
+                board_reading = run_module_a(
+                    frame_bgr,
+                    module_a_settings,
+                    roi_override=item.get("roi"),
+                    roi_method_override=str(item.get("roi_method") or "keyframe_selected"),
+                )
+                if board_reading.get("error") and "module_a" not in problems:
+                    problems["module_a"] = board_reading["error"]
 
-            texts = list(board_reading.get("texts") or [])
-            ocr_source = "none"
-            if video_prefer_printed:
-                primary_eng = normalize_ocr_engine_name(trocr_video.get("ocr_engine", "trocr"))
-                if texts and not _texts_look_low_value(texts):
-                    ocr_source = {
-                        "easyocr": "roi_easyocr",
-                        "paddleocr": "roi_paddleocr",
-                    }.get(primary_eng, "roi_printed")
-                elif texts:
-                    ocr_source = {
-                        "easyocr": "roi_easyocr_weak",
-                        "paddleocr": "roi_paddleocr_weak",
-                    }.get(primary_eng, "roi_printed_weak")
-                if use_video_hw_fallback and _texts_look_low_value(texts):
+                texts = list(board_reading.get("texts") or [])
+                ocr_source = "none"
+                if video_prefer_printed:
+                    primary_eng = normalize_ocr_engine_name(trocr_video.get("ocr_engine", "trocr"))
+                    if texts and not _texts_look_low_value(texts):
+                        ocr_source = {
+                            "easyocr": "roi_easyocr",
+                            "paddleocr": "roi_paddleocr",
+                        }.get(primary_eng, "roi_printed")
+                    elif texts:
+                        ocr_source = {
+                            "easyocr": "roi_easyocr_weak",
+                            "paddleocr": "roi_paddleocr_weak",
+                        }.get(primary_eng, "roi_printed_weak")
+                    if use_video_hw_fallback and _texts_look_low_value(texts):
+                        try:
+                            hw_texts = recognize_text_lines_in_image(
+                                frame_bgr,
+                                **_recognize_line_image_kwargs(
+                                    settings,
+                                    trocr_model_name=handwriting_model,
+                                    ocr_engine_override="trocr",
+                                ),
+                            )
+                            if hw_texts and not _texts_look_low_value(hw_texts):
+                                texts = hw_texts
+                                ocr_source = "handwriting_full_frame"
+                        except Exception as e:
+                            logger.warning("Handwriting OCR fallback failed on video keyframe: %s", e)
+                elif use_video_printed_fallback and _texts_look_low_value(texts):
                     try:
-                        hw_texts = recognize_text_lines_in_image(
+                        fallback_texts = recognize_text_lines_in_image(
                             frame_bgr,
                             **_recognize_line_image_kwargs(
                                 settings,
-                                trocr_model_name=handwriting_model,
+                                trocr_model_name=printed_fallback_model,
                                 ocr_engine_override="trocr",
                             ),
                         )
-                        if hw_texts and not _texts_look_low_value(hw_texts):
-                            texts = hw_texts
-                            ocr_source = "handwriting_full_frame"
+                        if fallback_texts and not _texts_look_low_value(fallback_texts):
+                            texts = fallback_texts
+                            ocr_source = "printed_full_frame"
                     except Exception as e:
-                        logger.warning("Handwriting OCR fallback failed on video keyframe: %s", e)
-            elif use_video_printed_fallback and _texts_look_low_value(texts):
-                try:
-                    fallback_texts = recognize_text_lines_in_image(
-                        frame_bgr,
-                        **_recognize_line_image_kwargs(
-                            settings,
-                            trocr_model_name=printed_fallback_model,
-                            ocr_engine_override="trocr",
-                        ),
-                    )
-                    if fallback_texts and not _texts_look_low_value(fallback_texts):
-                        texts = fallback_texts
-                        ocr_source = "printed_full_frame"
-                except Exception as e:
-                    logger.warning("Printed OCR fallback failed on video keyframe: %s", e)
-            if ocr_source == "none":
+                        logger.warning("Printed OCR fallback failed on video keyframe: %s", e)
+                if ocr_source == "none":
+                    if texts and not _texts_look_low_value(texts):
+                        ocr_source = "roi_handwriting"
+                    elif texts:
+                        ocr_source = "roi_handwriting_weak"
                 if texts and not _texts_look_low_value(texts):
-                    ocr_source = "roi_handwriting"
-                elif texts:
-                    ocr_source = "roi_handwriting_weak"
+                    _append_ocr_cache(
+                        ocr_result_cache,
+                        signature=content_signature,
+                        frame_index=frame_index,
+                        timestamp_sec=frame_timestamp_sec,
+                        texts=texts,
+                        ocr_source=ocr_source,
+                        cache_size=dedupe_cache_size,
+                    )
 
             aggregated_board_lines = _merge_unique_lines(aggregated_board_lines, texts)
 
@@ -589,10 +696,9 @@ def run_from_video_file(
                 best_roi_method = board_reading.get("roi_method") or item.get("roi_method")
 
             roi_box = coerce_roi_box(
-                board_reading.get("roi") or item.get("roi") or (0, 0, frame_bgr.shape[1], frame_bgr.shape[0]),
+                board_reading.get("roi") or precomputed_roi_box.as_tuple(),
                 image_shape=frame_bgr.shape,
             )
-            ocr_input_bgr, _, ocr_mask = prepare_ocr_inputs(frame_bgr, roi_box)
             debug_paths = _save_video_debug_assets(
                 debug_dir=debug_dir,
                 keyframe_idx=keyframe_idx,
@@ -611,6 +717,13 @@ def run_from_video_file(
                 "roi_method": board_reading.get("roi_method") or item.get("roi_method"),
                 "board_texts": texts,
                 "ocr_source": ocr_source,
+                "dedupe_enabled": dedupe_enabled,
+                "dedupe_is_duplicate": dedupe_match is not None,
+                "ocr_skipped": dedupe_match is not None,
+                "dedupe_similarity": dedupe_match.get("similarity") if dedupe_match is not None else None,
+                "reused_from_frame_index": dedupe_match.get("frame_index") if dedupe_match is not None else None,
+                "reused_from_timestamp_sec": dedupe_match.get("timestamp_sec") if dedupe_match is not None else None,
+                "reused_from_ocr_source": dedupe_match.get("ocr_source") if dedupe_match is not None else None,
                 "debug_paths": debug_paths or None,
             }
             keyframe_results.append(keyframe_result)

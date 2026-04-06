@@ -287,6 +287,54 @@ def _frame_timestamp_sec(capture: cv2.VideoCapture, frame_index: int, fps: float
     return 0.0
 
 
+def build_content_signature(
+    image: np.ndarray,
+    *,
+    size: tuple[int, int] = (64, 36),
+) -> np.ndarray:
+    """
+    Cheap content fingerprint for OCR dedupe.
+    Use a resized binary mask so small layout/text differences still change the signature.
+    """
+    if image is None or image.size == 0:
+        return np.zeros((size[1], size[0]), dtype=np.uint8)
+
+    arr = np.asarray(image)
+    if arr.ndim == 3:
+        try:
+            _, mask = preprocess_image(arr)
+        except Exception:
+            gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
+            mask = gray
+    else:
+        mask = arr
+
+    small = cv2.resize(mask, size, interpolation=cv2.INTER_AREA)
+    if small.ndim == 3:
+        small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    if small.dtype != np.uint8:
+        small = np.clip(small, 0, 255).astype(np.uint8)
+
+    max_value = int(np.max(small)) if small.size else 0
+    if max_value <= 1:
+        return (small > 0).astype(np.uint8) * 255
+
+    _, binary = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return binary.astype(np.uint8)
+
+
+def content_signature_similarity(
+    left: Optional[np.ndarray],
+    right: Optional[np.ndarray],
+) -> float:
+    if left is None or right is None:
+        return 0.0
+    if left.shape != right.shape:
+        return 0.0
+    diff = cv2.absdiff(left, right)
+    return float(max(0.0, 1.0 - (float(np.mean(diff)) / 255.0)))
+
+
 def _sample_video_frames(
     video_path: str,
     *,
@@ -328,9 +376,7 @@ def _sample_video_frames(
 def _board_signature(board_crop: np.ndarray, *, size: tuple[int, int] = (160, 90)) -> np.ndarray:
     # Scene-cut heuristics are too coarse for incremental board writing, so compare
     # a normalized ink mask of the detected board region instead.
-    _, ink_mask = preprocess_image(board_crop)
-    resized = cv2.resize(ink_mask, size, interpolation=cv2.INTER_AREA)
-    return (resized > 32).astype(np.uint8) * 255
+    return build_content_signature(board_crop, size=size)
 
 
 def _change_ratio(previous_signature: Optional[np.ndarray], current_signature: np.ndarray) -> float:

@@ -1,6 +1,32 @@
-# Repo root (parent clone / IDE)
-venv/
-.venv/
 .cursor/
 .idea/
+.venv/
+venv/
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.model_cache/
+*.log
 .DS_Store
+
+# Local datasets and uploads
+datasets/
+web_uploads/*
+!web_uploads/.gitkeep
+
+# Local demo / debug assets
+demo_data/
+
+# YOLO / Ultralytics training artifacts
+runs/
+
+# Downloaded pretrained checkpoints kept outside versioned models/
+yolo*.pt
+
+# Keep committed final model weights under models/
+!models/
+!models/*.pt
