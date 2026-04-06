@@ -57,6 +57,13 @@ video:
   dedupe_similarity_threshold: 0.985
   dedupe_min_interval_sec: 8.0
   dedupe_cache_size: 12
+  # Skip OCR when the ROI mask looks like a person/blob rather than text lines.
+  text_presence_enabled: true
+  text_presence_min_ink_ratio: 0.002
+  text_presence_min_line_spans: 2
+  text_presence_min_components: 8
+  text_presence_max_component_ratio: 0.14
+  text_presence_max_single_span_height_ratio: 0.42
   keyframe_source: yolo_monitor
   yolo_monitor_stride_sec: 0.25
   yolo_monitor_max_pool: 220

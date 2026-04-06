@@ -7,8 +7,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +26,7 @@ from blackboard_analytics.module_a_blackboard_ocr import (
     prepare_ocr_inputs,
     recognize_text_lines_in_image,
     run_module_a,
+    segment_text_lines,
 )
 from blackboard_analytics.module_b_clarity import run_module_b
 from blackboard_analytics.module_c_whisper import run_module_c
@@ -37,6 +40,9 @@ from blackboard_analytics.module_video_keyframes import (
 )
 
 logger = logging.getLogger(__name__)
+_QUOTE_LIKE_RE = re.compile(r"[`'\"“”‘’]")
+_NON_ALNUM_RE = re.compile(r"[^0-9a-zA-Z]+")
+_WS_RE = re.compile(r"\s+")
 
 
 def _recognize_line_image_kwargs(
@@ -105,17 +111,41 @@ def _apply_fast_video_settings(settings: dict) -> dict:
 
 def _merge_unique_lines(existing: list[str], fresh: list[str]) -> list[str]:
     merged = list(existing)
-    seen = {line.strip().casefold() for line in existing if line and line.strip()}
+    seen = [_canonicalize_line_for_dedupe(line) for line in existing if line and line.strip()]
     for line in fresh:
         cleaned = (line or "").strip()
         if not cleaned:
             continue
-        token = cleaned.casefold()
-        if token in seen:
+        token = _canonicalize_line_for_dedupe(cleaned)
+        if not token:
             continue
-        seen.add(token)
+        if any(_lines_near_duplicate(token, prior) for prior in seen):
+            continue
+        seen.append(token)
         merged.append(cleaned)
     return merged
+
+
+def _canonicalize_line_for_dedupe(text: str) -> str:
+    cleaned = (text or "").strip().lower()
+    if not cleaned:
+        return ""
+    cleaned = _QUOTE_LIKE_RE.sub("", cleaned)
+    cleaned = _NON_ALNUM_RE.sub(" ", cleaned)
+    return _WS_RE.sub(" ", cleaned).strip()
+
+
+def _lines_near_duplicate(left: str, right: str, *, min_ratio: float = 0.94) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    if len(shorter) >= 8 and shorter in longer:
+        return True
+    if len(shorter) < 10:
+        return False
+    return SequenceMatcher(None, left, right).ratio() >= min_ratio
 
 
 def _filter_noise_board_lines(
@@ -166,7 +196,11 @@ def _apply_optional_deepseek_line_filter(
 
 
 def _dedupe_subsumed_lines(lines: list[str], *, min_len: int = 8) -> list[str]:
-    items = [(s.strip(), s.strip().casefold()) for s in lines if s and s.strip()]
+    items = [
+        (s.strip(), _canonicalize_line_for_dedupe(s))
+        for s in lines
+        if s and s.strip() and _canonicalize_line_for_dedupe(s)
+    ]
     if len(items) < 2:
         return [text for text, _ in items]
     drop: set[int] = set()
@@ -176,10 +210,93 @@ def _dedupe_subsumed_lines(lines: list[str], *, min_len: int = 8) -> list[str]:
         for j, (_, other_cf) in enumerate(items):
             if i == j or len(other_cf) <= len(item_cf):
                 continue
-            if item_cf in other_cf:
+            if item_cf in other_cf or _lines_near_duplicate(item_cf, other_cf):
                 drop.add(i)
                 break
     return [items[i][0] for i in range(len(items)) if i not in drop]
+
+
+def _normalize_board_lines(lines: list[str], *, min_substring_len: int) -> list[str]:
+    unique = _merge_unique_lines([], lines)
+    return _dedupe_subsumed_lines(unique, min_len=max(4, min_substring_len))
+
+
+def _measure_text_presence(
+    ocr_mask: np.ndarray,
+    *,
+    min_ink_ratio: float,
+    min_line_spans: int,
+    min_components: int,
+    max_largest_component_ratio: float,
+    max_single_span_height_ratio: float,
+) -> dict[str, Any]:
+    if ocr_mask is None or ocr_mask.size == 0:
+        return {
+            "likely_text": False,
+            "reason": "empty_mask",
+            "ink_ratio": 0.0,
+            "line_span_count": 0,
+            "component_count": 0,
+            "largest_component_ratio": 0.0,
+            "max_line_span_height_ratio": 0.0,
+        }
+
+    binary = (ocr_mask > 0).astype(np.uint8)
+    h, w = binary.shape[:2]
+    area = float(max(1, h * w))
+    ink_ratio = float(binary.sum() / area)
+    line_spans = segment_text_lines((binary * 255).astype(np.uint8))
+    line_span_count = len(line_spans)
+    max_line_span_height_ratio = 0.0
+    if line_spans:
+        max_line_span_height_ratio = max((y1 - y0) / float(max(1, h)) for y0, y1 in line_spans)
+
+    component_count = 0
+    largest_component_ratio = 0.0
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    if num_labels > 1:
+        component_areas = stats[1:, cv2.CC_STAT_AREA]
+        component_count = int(component_areas.size)
+        largest_component_ratio = float(np.max(component_areas) / area)
+
+    likely_text = False
+    reason = "no_text_like_pattern"
+    if ink_ratio < max(0.0, min_ink_ratio):
+        reason = "too_little_ink"
+    elif line_span_count >= max(1, min_line_spans):
+        likely_text = True
+        reason = "multiple_line_spans"
+    elif (
+        line_span_count == 1
+        and component_count >= max(1, min_components)
+        and largest_component_ratio <= max(0.0, max_largest_component_ratio)
+        and max_line_span_height_ratio <= max(0.0, max_single_span_height_ratio)
+    ):
+        likely_text = True
+        reason = "single_text_like_span"
+    elif (
+        line_span_count == 0
+        and component_count >= max(6, min_components * 2)
+        and largest_component_ratio <= max(0.0, max_largest_component_ratio * 0.65)
+    ):
+        likely_text = True
+        reason = "fragmented_text_components"
+    elif largest_component_ratio > max(0.0, max_largest_component_ratio):
+        reason = "dominant_non_text_blob"
+    elif component_count < max(1, min_components):
+        reason = "too_few_components"
+    elif max_line_span_height_ratio > max(0.0, max_single_span_height_ratio):
+        reason = "single_tall_blob"
+
+    return {
+        "likely_text": likely_text,
+        "reason": reason,
+        "ink_ratio": round(ink_ratio, 5),
+        "line_span_count": line_span_count,
+        "component_count": component_count,
+        "largest_component_ratio": round(largest_component_ratio, 5),
+        "max_line_span_height_ratio": round(max_line_span_height_ratio, 5),
+    }
 
 
 def _downscale_max_width(image_bgr: np.ndarray, max_width: int) -> np.ndarray:
@@ -482,6 +599,18 @@ def run_from_frame_and_audio(
         speech_text,
         settings,
     )
+    lines_on_board = _normalize_board_lines(
+        lines_on_board,
+        min_substring_len=max(
+            4,
+            int(
+                ((settings.get("video") if isinstance(settings.get("video"), dict) else {}) or {}).get(
+                    "merge_substring_min_len",
+                    8,
+                )
+            ),
+        ),
+    )
     board_as_paragraph = "\n".join(lines_on_board)
 
     lesson_alignment = run_module_d(board_as_paragraph, speech_text, settings)
@@ -559,6 +688,18 @@ def run_from_video_file(
     )
     dedupe_min_interval_sec = max(0.0, float(video_cfg.get("dedupe_min_interval_sec", 8.0)))
     dedupe_cache_size = max(1, int(video_cfg.get("dedupe_cache_size", 12)))
+    text_presence_enabled = bool(video_cfg.get("text_presence_enabled", True))
+    text_presence_min_ink_ratio = max(0.0, float(video_cfg.get("text_presence_min_ink_ratio", 0.002)))
+    text_presence_min_line_spans = max(1, int(video_cfg.get("text_presence_min_line_spans", 2)))
+    text_presence_min_components = max(1, int(video_cfg.get("text_presence_min_components", 8)))
+    text_presence_max_component_ratio = max(
+        0.0,
+        min(1.0, float(video_cfg.get("text_presence_max_component_ratio", 0.14))),
+    )
+    text_presence_max_single_span_height_ratio = max(
+        0.0,
+        min(1.0, float(video_cfg.get("text_presence_max_single_span_height_ratio", 0.42))),
+    )
     ocr_result_cache: list[dict[str, Any]] = []
 
     with tempfile.TemporaryDirectory(prefix="blackboard_video_") as tmp_dir:
@@ -590,6 +731,14 @@ def run_from_video_file(
             )
             ocr_input_bgr, _, ocr_mask = prepare_ocr_inputs(frame_bgr, precomputed_roi_box)
             content_signature = build_content_signature(ocr_mask)
+            text_presence = _measure_text_presence(
+                ocr_mask,
+                min_ink_ratio=text_presence_min_ink_ratio,
+                min_line_spans=text_presence_min_line_spans,
+                min_components=text_presence_min_components,
+                max_largest_component_ratio=text_presence_max_component_ratio,
+                max_single_span_height_ratio=text_presence_max_single_span_height_ratio,
+            )
             dedupe_match = (
                 _find_reusable_ocr_result(
                     ocr_result_cache,
@@ -601,13 +750,23 @@ def run_from_video_file(
                 if dedupe_enabled
                 else None
             )
+            skip_for_text_presence = text_presence_enabled and not bool(text_presence.get("likely_text"))
             if video_prefer_printed:
                 trocr_video = dict(trocr_opts)
                 trocr_video["model_name"] = printed_fallback_model
                 module_a_settings = {**settings, "trocr": trocr_video}
             else:
                 module_a_settings = settings
-            if dedupe_match is not None:
+            if skip_for_text_presence:
+                board_reading = {
+                    "texts": [],
+                    "roi": precomputed_roi_box.as_tuple(),
+                    "roi_method": str(item.get("roi_method") or "precomputed_roi"),
+                    "error": None,
+                }
+                texts = []
+                ocr_source = f"skipped_{text_presence.get('reason') or 'no_text_like_content'}"
+            elif dedupe_match is not None:
                 board_reading = {
                     "texts": list(dedupe_match.get("texts") or []),
                     "roi": precomputed_roi_box.as_tuple(),
@@ -717,9 +876,19 @@ def run_from_video_file(
                 "roi_method": board_reading.get("roi_method") or item.get("roi_method"),
                 "board_texts": texts,
                 "ocr_source": ocr_source,
+                "text_presence_enabled": text_presence_enabled,
+                "text_presence_likely_text": text_presence.get("likely_text"),
+                "text_presence_reason": text_presence.get("reason"),
+                "text_presence_ink_ratio": text_presence.get("ink_ratio"),
+                "text_presence_line_spans": text_presence.get("line_span_count"),
+                "text_presence_component_count": text_presence.get("component_count"),
+                "text_presence_largest_component_ratio": text_presence.get("largest_component_ratio"),
                 "dedupe_enabled": dedupe_enabled,
                 "dedupe_is_duplicate": dedupe_match is not None,
-                "ocr_skipped": dedupe_match is not None,
+                "ocr_skipped": skip_for_text_presence or dedupe_match is not None,
+                "ocr_skip_reason": text_presence.get("reason") if skip_for_text_presence else (
+                    "reused_previous_ocr" if dedupe_match is not None else None
+                ),
                 "dedupe_similarity": dedupe_match.get("similarity") if dedupe_match is not None else None,
                 "reused_from_frame_index": dedupe_match.get("frame_index") if dedupe_match is not None else None,
                 "reused_from_timestamp_sec": dedupe_match.get("timestamp_sec") if dedupe_match is not None else None,
@@ -749,9 +918,9 @@ def run_from_video_file(
                 logger.warning("Video text harvest pass failed: %s", e)
 
         line_count_before_substring_dedupe = len(aggregated_board_lines)
-        merged_deduped = _dedupe_subsumed_lines(
+        merged_deduped = _normalize_board_lines(
             aggregated_board_lines,
-            min_len=max(4, int(video_cfg.get("merge_substring_min_len", 8))),
+            min_substring_len=max(4, int(video_cfg.get("merge_substring_min_len", 8))),
         )
         line_count_after_substring_dedupe = len(merged_deduped)
 
@@ -777,6 +946,10 @@ def run_from_video_file(
             board_lines_primary,
             speech_text,
             settings,
+        )
+        board_lines_primary = _normalize_board_lines(
+            board_lines_primary,
+            min_substring_len=max(4, int(video_cfg.get("merge_substring_min_len", 8))),
         )
         board_as_paragraph = "\n".join(board_lines_primary)
 
