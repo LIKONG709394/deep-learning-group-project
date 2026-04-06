@@ -33,6 +33,7 @@ from blackboard_analytics.module_c_whisper import run_module_c
 from blackboard_analytics.module_d_deepseek import run_deepseek_filter_board_lines, run_module_d_deepseek
 from blackboard_analytics.module_d_semantic import run_module_d
 from blackboard_analytics.module_e_report import run_module_e
+from blackboard_analytics.module_export_study_pack import build_study_pack
 from blackboard_analytics.module_video_keyframes import (
     build_content_signature,
     content_signature_similarity,
@@ -612,6 +613,15 @@ def run_from_frame_and_audio(
         ),
     )
     board_as_paragraph = "\n".join(lines_on_board)
+    study_pack = build_study_pack(
+        board_lines=lines_on_board,
+        speech_text=speech_text,
+        speech_segments=spoken_transcript.get("speech_segments") or [],
+        video_keyframes=None,
+        config=settings,
+    )
+    if study_pack.get("error"):
+        problems["module_export_study_pack"] = str(study_pack["error"])
 
     lesson_alignment = run_module_d(board_as_paragraph, speech_text, settings)
     if lesson_alignment.get("error"):
@@ -646,6 +656,7 @@ def run_from_frame_and_audio(
         "speech_segments": spoken_transcript.get("speech_segments") or [],
         "alignment": alignment_summary,
         "deepseek_alignment": deepseek_alignment,
+        "study_pack": study_pack,
         "pdf_path": pdf_bundle.get("pdf_path"),
         "errors": problems,
     }
@@ -952,6 +963,15 @@ def run_from_video_file(
             min_substring_len=max(4, int(video_cfg.get("merge_substring_min_len", 8))),
         )
         board_as_paragraph = "\n".join(board_lines_primary)
+        study_pack = build_study_pack(
+            board_lines=board_lines_primary,
+            speech_text=speech_text,
+            speech_segments=spoken_transcript.get("speech_segments") or [],
+            video_keyframes=keyframe_results,
+            config=settings,
+        )
+        if study_pack.get("error"):
+            problems["module_export_study_pack"] = str(study_pack["error"])
 
         lesson_alignment = run_module_d(board_as_paragraph, speech_text, settings)
         if lesson_alignment.get("error"):
@@ -1004,6 +1024,7 @@ def run_from_video_file(
         "speech_segments": spoken_transcript.get("speech_segments") or [],
         "alignment": alignment_summary,
         "deepseek_alignment": deepseek_alignment,
+        "study_pack": study_pack,
         "pdf_path": pdf_bundle.get("pdf_path"),
         "errors": problems,
         "video_keyframes": keyframe_results,

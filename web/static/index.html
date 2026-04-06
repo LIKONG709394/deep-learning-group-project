@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css?v=4" />
+  <link rel="stylesheet" href="/style.css?v=6" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -58,8 +58,11 @@
       </div>
 
       <div class="result-block">
-        <h3>Board OCR</h3>
-        <ul id="boardList" class="mono-list"></ul>
+        <div class="result-heading-row">
+          <h3>Board OCR</h3>
+          <button type="button" class="btn secondary small-btn hidden" id="boardToggle">Show more</button>
+        </div>
+        <ul id="boardList" class="mono-list collapsible-panel"></ul>
         <p class="muted" id="boardEmpty">(no text)</p>
       </div>
 
@@ -77,8 +80,11 @@
       </div>
 
       <div class="result-block">
-        <h3>Speech (Whisper)</h3>
-        <p id="speechText" class="speech-box"></p>
+        <div class="result-heading-row">
+          <h3>Speech (Whisper)</h3>
+          <button type="button" class="btn secondary small-btn hidden" id="speechToggle">Show more</button>
+        </div>
+        <p id="speechText" class="speech-box collapsible-panel"></p>
       </div>
 
       <div class="result-block">
@@ -91,6 +97,19 @@
         <div id="deepseekBox" class="metric-grid"></div>
         <p id="deepseekReason" class="speech-box hidden"></p>
         <ul id="deepseekEvidence" class="mono-list hidden"></ul>
+      </div>
+
+      <div class="result-block">
+        <div class="result-heading-row">
+          <h3>Export for AI summary</h3>
+          <div class="action-group">
+            <button type="button" class="btn secondary small-btn" id="downloadStudyPack">Download TXT</button>
+            <button type="button" class="btn secondary small-btn" id="copyStudyPack">Copy</button>
+          </div>
+        </div>
+        <div id="studyPackMeta" class="metric-grid"></div>
+        <p id="studyPackHint" class="speech-box hidden"></p>
+        <pre id="studyPackText" class="export-box"></pre>
       </div>
 
       <div class="result-block errors hidden" id="errorsBox">
@@ -109,6 +128,6 @@
     <span>Local service — data stays on your machine</span>
   </footer>
 
-  <script src="/app.js?v=4"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>

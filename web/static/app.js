@@ -16,9 +16,11 @@
     out: el("resultsCard"),
     pdf: el("downloadPdf"),
     boardUl: el("boardList"),
+    boardToggle: el("boardToggle"),
     boardEmpty: el("boardEmpty"),
     clarity: el("clarityBox"),
     speech: el("speechText"),
+    speechToggle: el("speechToggle"),
     align: el("alignBox"),
     deepseek: el("deepseekBox"),
     deepseekReason: el("deepseekReason"),
@@ -27,6 +29,11 @@
     lineFilterReason: el("deepseekFilterReason"),
     lineFilterDroppedLabel: el("deepseekDroppedLabel"),
     lineFilterDroppedUl: el("deepseekDroppedList"),
+    studyPackMeta: el("studyPackMeta"),
+    studyPackHint: el("studyPackHint"),
+    studyPackText: el("studyPackText"),
+    copyStudyPack: el("copyStudyPack"),
+    downloadStudyPack: el("downloadStudyPack"),
     errBox: el("errorsBox"),
     errUl: el("errorsList"),
     json: el("rawJson"),
@@ -78,6 +85,25 @@
     d.className = "metric-row";
     d.innerHTML = `<span>${label}</span><strong>${String(value)}</strong>`;
     parent.appendChild(d);
+  };
+
+  const setCollapsible = (contentEl, toggleEl, { maxHeight = 240 } = {}) => {
+    if (!contentEl || !toggleEl) return;
+    contentEl.classList.remove("is-collapsed");
+    toggleEl.classList.add("hidden");
+    toggleEl.textContent = "Show more";
+    const overflow = contentEl.scrollHeight > maxHeight + 8;
+    if (!overflow) {
+      contentEl.style.removeProperty("--collapsed-max-height");
+      return;
+    }
+    contentEl.style.setProperty("--collapsed-max-height", `${maxHeight}px`);
+    contentEl.classList.add("is-collapsed");
+    toggleEl.classList.remove("hidden");
+    toggleEl.onclick = () => {
+      const collapsed = contentEl.classList.toggle("is-collapsed");
+      toggleEl.textContent = collapsed ? "Show more" : "Show less";
+    };
   };
 
   const showLineFilter = (f) => {
@@ -167,6 +193,42 @@
     }
   };
 
+  const showStudyPack = (pack) => {
+    const p = pack || {};
+    ui.studyPackMeta.replaceChildren();
+    ui.studyPackHint.classList.add("hidden");
+    ui.studyPackHint.textContent = "";
+    ui.studyPackText.textContent = "";
+    ui.copyStudyPack.disabled = true;
+    ui.downloadStudyPack.disabled = true;
+
+    if (!p.enabled) {
+      row(ui.studyPackMeta, "Status", "Not enabled");
+      ui.studyPackText.textContent = "(study pack export is disabled)";
+      return;
+    }
+
+    if (p.error) {
+      row(ui.studyPackMeta, "Status", "Failed");
+      row(ui.studyPackMeta, "Error", p.error);
+      ui.studyPackText.textContent = p.full_export_text || "(study pack export failed)";
+      return;
+    }
+
+    row(ui.studyPackMeta, "Status", "Ready");
+    row(ui.studyPackMeta, "Title", p.title || "Class Content Export");
+    row(ui.studyPackMeta, "Board lines", Array.isArray(p.board_lines_clean) ? p.board_lines_clean.length : 0);
+    row(ui.studyPackMeta, "Timeline items", Array.isArray(p.timeline_items) ? p.timeline_items.length : 0);
+    if (p.ai_prompt_hint) {
+      ui.studyPackHint.textContent = p.ai_prompt_hint;
+      ui.studyPackHint.classList.remove("hidden");
+    }
+    ui.studyPackText.textContent = p.full_export_text || "(no export text)";
+    const hasText = !!(p.full_export_text || "").trim();
+    ui.copyStudyPack.disabled = !hasText;
+    ui.downloadStudyPack.disabled = !hasText;
+  };
+
   ui.video.addEventListener("change", () => {
     const f = ui.video.files[0];
     if (f && !videoOk(f)) {
@@ -248,6 +310,7 @@
       li.textContent = t;
       ui.boardUl.appendChild(li);
     }
+    setCollapsible(ui.boardUl, ui.boardToggle, { maxHeight: 220 });
 
     showLineFilter(r.deepseek_board_line_filter);
 
@@ -269,6 +332,7 @@
     );
 
     ui.speech.textContent = r.speech_text || "(no transcription)";
+    setCollapsible(ui.speech, ui.speechToggle, { maxHeight: 240 });
 
     // Does speech match the board?
     const a = r.alignment || {};
@@ -278,6 +342,7 @@
     row(ui.align, "Verdict", verdictPretty[a.verdict] || a.verdict);
 
     showDeepSeek(r.deepseek_alignment);
+    showStudyPack(r.study_pack);
 
     // Pipeline step failures (we still show whatever succeeded)
     const bad = r.errors || {};
@@ -357,5 +422,33 @@
     } finally {
       ui.run.disabled = false;
     }
+  });
+
+  ui.copyStudyPack.addEventListener("click", async () => {
+    const text = (ui.studyPackText.textContent || "").trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      ui.copyStudyPack.textContent = "Copied";
+      window.setTimeout(() => {
+        ui.copyStudyPack.textContent = "Copy";
+      }, 1200);
+    } catch {
+      alert("Copy failed. You can still select the export text manually.");
+    }
+  });
+
+  ui.downloadStudyPack.addEventListener("click", () => {
+    const text = (ui.studyPackText.textContent || "").trim();
+    if (!text) return;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "study-pack.txt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 })();

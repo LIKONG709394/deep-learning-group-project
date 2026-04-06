@@ -119,3 +119,14 @@ deepseek:
   filter_refine_post_process: true
   filter_refine_ascii_only: true
   filter_refine_drop_singleton_letters: true
+
+study_pack:
+  enabled: true
+  title: "Class Content Export"
+  max_board_lines: 40
+  max_line_chars: 220
+  max_speech_chars: 12000
+  include_timeline: true
+  max_timeline_items: 10
+  timeline_min_gap_sec: 20.0
+  include_ai_prompt_hint: true
