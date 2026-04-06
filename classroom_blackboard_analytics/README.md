@@ -254,9 +254,6 @@ python scripts/smoke_test_env.py
 | `BLACKBOARD_WEB_PORT` | Default port for web and tunnel helper. |
 | `BLACKBOARD_VIDEO_FAST` | `1` / `true` → force fast video preset. |
 | `HF_HUB_DISABLE_SYMLINKS_WARNING` | Set to `1` on Windows if symlink warnings annoy (optional). |
-| `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `TORCH_HOME`, `SENTENCE_TRANSFORMERS_HOME` | Set automatically by `ensure_project_model_cache_dirs()` under `.model_cache/` (preferred over legacy `TRANSFORMERS_CACHE`). |
-
-At import time, `model_cache` sets **`USE_TF=0`** and **`USE_TORCH=1`** so `transformers` does not pull the TensorFlow/Keras path.
 
 ---
 
