@@ -1,0 +1,40 @@
+# Core
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
+# torch/torchvision: default PyPI wheels are CPU-only. For NVIDIA GPU (e.g. GTX 1650 on Windows), install CUDA builds first, then the rest:
+#   pip uninstall -y torch torchvision
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Re-running "pip install -r requirements.txt" alone may pull CPU torch again; reinstall from the cu118 index if cuda becomes False.
+# transformers>=4.36 treats torch<2.1 as unavailable; whisper needs a real torch build (not a stub).
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Module A
+ultralytics>=8.0.0
+# YOLO-World open-vocabulary text encoder (import name: clip)
+git+https://github.com/ultralytics/CLIP.git
+transformers>=4.36.0
+# Slide / printed text (set trocr.ocr_engine in config): easyocr is lighter; paddle needs paddlepaddle
+easyocr>=1.7.0
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0.3
+
+# Module B (Whisper wav resample paths also use scipy)
+scipy>=1.11.0
+
+# Module C & D
+openai-whisper>=20231117
+sentence-transformers>=2.2.0
+soundfile>=0.12.0
+
+# Module E (PDF)
+reportlab>=4.0.0
+
+# CLI / config
+PyYAML>=6.0.0
+
+# Web UI
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6

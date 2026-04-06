@@ -1,0 +1,103 @@
+yolo:
+  weights_path: "models/text_blackboard_detector_best.pt"
+  conf: 0.25
+  iou: 0.45
+  blackboard_class_id: 0
+
+yolo_world:
+  enabled: false
+  model: "yolov8s-worldv2.pt"
+  conf: 0.25
+  iou: 0.45
+  english_only_prompts: true
+  text_classes:
+    - "presentation slide"
+    - "powerpoint slide"
+    - "projector screen"
+    - "lecture slide on monitor"
+    - "slideshow content area"
+    - "video player content"
+
+trocr:
+  # OCR backend for board ROI: trocr | easyocr | paddleocr (PPT/slides: easyocr or paddleocr recommended)
+  ocr_engine: easyocr
+  easyocr_languages:
+    - en
+  # Paddle: en, ch, chinese_cht, korean, japan, etc. (install: pip install paddlepaddle paddleocr)
+  paddleocr_lang: en
+  model_name: "microsoft/trocr-base-handwritten"
+  printed_model_name: "microsoft/trocr-base-printed"
+  # Video: treat slides as printed first (uses ocr_engine on ROI; TrOCR printed model only if ocr_engine=trocr).
+  video_prefer_printed_model: true
+  # If primary OCR on a keyframe looks empty or useless, try full-frame handwriting TrOCR once.
+  video_enable_handwriting_fallback: true
+  video_enable_printed_fallback: true
+  device: auto
+
+whisper:
+  model_size: "base"
+  language: "en"
+  task: "transcribe"
+  initial_prompt: "English classroom lecture with clear educational vocabulary."
+  enable_silence_segmentation: false
+  silence_threshold: 0.0004
+  silence_duration_sec: 1.0
+  min_segment_sec: 2.0
+  max_segment_sec: 20.0
+  analysis_window_sec: 0.1
+  skip_energy_threshold: 0.00012
+
+video:
+  debug_enabled: true
+  # false = more keyframes + text harvest (better for PPT/printed); true = still runs but uses lighter _FAST_VIDEO_PRESET.
+  fast_mode: false
+  fast_whisper_tiny: false
+  keyframe_source: yolo_monitor
+  yolo_monitor_stride_sec: 0.25
+  yolo_monitor_max_pool: 220
+  iframe_max_decode: 80
+  sample_every_sec: 2.0
+  min_change_ratio: 0.02
+  min_keyframe_score: 45.0
+  max_keyframes: 28
+  min_roi_area_ratio: 0.35
+  board_text_mode: merged
+  merge_substring_min_len: 8
+  text_harvest_every_sec: 1.0
+  text_harvest_max_scans: 240
+  text_harvest_full_frame_printed: true
+  full_frame_ocr_max_width: 1280
+  ocr_diagnostics: true
+  filter_noise_board_lines: false
+  noise_line_min_chars: 14
+  noise_line_min_letters: 5
+
+sbert:
+  model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+clarity:
+  laplacian_clear_min: 120.0
+  laplacian_messy_max: 40.0
+  stroke_variance_messy_min: 8.0
+
+semantic:
+  high_match_min: 0.72
+  partial_min: 0.45
+  keyword_overlap_high: 0.35
+
+deepseek:
+  enabled: true
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+  api_key_env: "DEEPSEEK_API_KEY"
+  timeout_sec: 30
+  temperature: 0.1
+  # Ask the model which OCR lines are real board/slide content (uses speech as context). Costs one extra API call per run.
+  filter_board_lines: true
+  filter_board_lines_max_lines: 120
+  filter_timeout_sec: 45
+  filter_temperature: 0.1
+  # After DeepSeek picks lines: strip non-ASCII characters and drop orphan single-letter tokens (keeps a, I; keeps 3D, x=5).
+  filter_refine_post_process: true
+  filter_refine_ascii_only: true
+  filter_refine_drop_singleton_letters: true

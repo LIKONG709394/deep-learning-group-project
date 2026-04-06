@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Classroom blackboard analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css?v=4" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="header">
+    <div class="header-inner">
+      <h1>Classroom blackboard analytics</h1>
+      <p class="subtitle">Upload a blackboard frame and aligned audio to get OCR, clarity, speech alignment, and a PDF report</p>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="card upload-card">
+      <h2>Upload</h2>
+      <div class="drop-zone" id="dropZone" tabindex="0">
+        <p class="drop-hint">Drag a video here, or drag a blackboard image and aligned audio, or use the file pickers below</p>
+        <div class="file-rows">
+          <label class="file-label">
+            <span class="label-text">Video</span>
+            <input type="file" id="videoInput" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,.mp4,.mov,.avi,.mkv" />
+            <span class="file-name" id="videoName">None</span>
+          </label>
+          <div class="input-divider">or keep using the existing image + audio path</div>
+          <label class="file-label">
+            <span class="label-text">Blackboard image</span>
+            <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" />
+            <span class="file-name" id="imageName">None</span>
+          </label>
+          <label class="file-label">
+            <span class="label-text">Audio (MP3 only)</span>
+            <input type="file" id="audioInput" accept="audio/mpeg,.mp3" />
+            <span class="file-name" id="audioName">None</span>
+          </label>
+        </div>
+      </div>
+      <button type="button" class="btn primary" id="runBtn">Run analysis</button>
+      <p class="hint">Choose either one video file, or one blackboard image plus one MP3. Video/audio extraction and transcription require ffmpeg on your system PATH.</p>
+    </section>
+
+    <section class="card status-card hidden" id="statusCard">
+      <div class="spinner" id="spinner" aria-hidden="true"></div>
+      <p id="statusText">Running… First run may download models and take several minutes.</p>
+    </section>
+
+    <section class="card results-card hidden" id="resultsCard">
+      <h2>Results</h2>
+      <div class="actions-top">
+        <a class="btn secondary hidden" id="downloadPdf" href="#" download>Download PDF report</a>
+      </div>
+
+      <div class="result-block">
+        <h3>Board OCR</h3>
+        <ul id="boardList" class="mono-list"></ul>
+        <p class="muted" id="boardEmpty">(no text)</p>
+      </div>
+
+      <div class="result-block">
+        <h3>DeepSeek line filter (noise removal)</h3>
+        <div id="deepseekFilterBox" class="metric-grid"></div>
+        <p id="deepseekFilterReason" class="speech-box hidden"></p>
+        <p class="muted small-label hidden" id="deepseekDroppedLabel">Removed lines</p>
+        <ul id="deepseekDroppedList" class="mono-list hidden"></ul>
+      </div>
+
+      <div class="result-block">
+        <h3>Handwriting clarity</h3>
+        <div id="clarityBox" class="metric-grid"></div>
+      </div>
+
+      <div class="result-block">
+        <h3>Speech (Whisper)</h3>
+        <p id="speechText" class="speech-box"></p>
+      </div>
+
+      <div class="result-block">
+        <h3>Board vs speech alignment</h3>
+        <div id="alignBox" class="metric-grid"></div>
+      </div>
+
+      <div class="result-block">
+        <h3>DeepSeek relevance analysis</h3>
+        <div id="deepseekBox" class="metric-grid"></div>
+        <p id="deepseekReason" class="speech-box hidden"></p>
+        <ul id="deepseekEvidence" class="mono-list hidden"></ul>
+      </div>
+
+      <div class="result-block errors hidden" id="errorsBox">
+        <h3>Module notes</h3>
+        <ul id="errorsList"></ul>
+      </div>
+
+      <details class="raw-json">
+        <summary>Raw JSON</summary>
+        <pre id="rawJson"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Local service — data stays on your machine</span>
+  </footer>
+
+  <script src="/app.js?v=4"></script>
+</body>
+</html>

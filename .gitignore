@@ -60,6 +60,10 @@ uploads/*.tflite
 uploads/*.txt
 !uploads/.gitkeep
 
+# Blackboard web UI temp uploads
+classroom_blackboard_analytics/web_uploads/*
+!classroom_blackboard_analytics/web_uploads/.gitkeep
+
 # macOS
 .DS_Store
 .AppleDouble
