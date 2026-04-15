@@ -7,6 +7,7 @@ import json
 import os
 import sys
 from pathlib import Path
+import time
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src"
@@ -14,10 +15,11 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from blackboard_analytics.config_loader import load_pipeline_config  # noqa: E402
-from blackboard_analytics.pipeline import run_from_image_and_audio_files, run_from_video_file  # noqa: E402
+from blackboard_analytics.pipelineOld import run_from_image_and_audio_files, run_from_video_file  # noqa: E402
 
 
 def main() -> None:
+    
     os.chdir(_ROOT)
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", default=None, help="Blackboard frame image path (OpenCV-readable)")
@@ -61,4 +63,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    allstart = time.perf_counter()
     main()
+    elapsed = time.perf_counter() - allstart
+    print(f"All took {elapsed:.3f}s")        

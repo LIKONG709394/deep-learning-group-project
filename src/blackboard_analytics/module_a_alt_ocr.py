@@ -80,21 +80,14 @@ def _cluster_detections_to_lines(
 
 
 def _easyocr_detections_to_entries(result: Sequence[Any]) -> List[Tuple[float, float, float, str]]:
-    out: List[Tuple[float, float, float, str]] = []
+    out: List[Tuple[float, float, float, str]] = []    
     for item in result:
-        if not item or len(item) < 2:
-            continue
+        if not item or len(item) < 2: continue
         bbox, text = item[0], item[1]
         conf = float(item[2]) if len(item) > 2 else 1.0
-        if conf < 0.15:
-            continue
-        try:
-            xs = [float(p[0]) for p in bbox]
-            ys = [float(p[1]) for p in bbox]
-        except (TypeError, IndexError, ValueError):
-            continue
-        if not xs or not ys:
-            continue
+        if conf < 0.15: continue
+        xs = [float(p[0]) for p in bbox]
+        ys = [float(p[1]) for p in bbox]
         out.append((min(ys), max(ys), min(xs), str(text).strip()))
     return out
 

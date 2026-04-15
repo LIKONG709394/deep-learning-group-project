@@ -40,7 +40,7 @@ _WHISPER_MODELS: Dict[str, Any] = {}
 _WHISPER_LOCK = threading.Lock()
 
 
-def _find_ffmpeg_executable() -> Optional[str]:
+def find_ffmpeg_executable() -> Optional[str]:
     found = shutil.which("ffmpeg")
     if found:
         return found
@@ -87,7 +87,7 @@ def _find_ffmpeg_executable() -> Optional[str]:
     return None
 
 
-def _ensure_ffmpeg_on_path() -> bool:
+def ensure_ffmpeg_on_path() -> bool:
     if shutil.which("ffmpeg"):
         return True
     exe = _find_ffmpeg_executable()
@@ -99,7 +99,7 @@ def _ensure_ffmpeg_on_path() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _as_float32_mono(audio: "np.ndarray") -> "np.ndarray":
+def as_float32_mono(audio: "np.ndarray") -> "np.ndarray":
     data = np.asarray(audio)
     if data.ndim == 2:
         data = data.mean(axis=1)
@@ -116,7 +116,7 @@ def _as_float32_mono(audio: "np.ndarray") -> "np.ndarray":
     return out
 
 
-def _resample_to_16k(audio: "np.ndarray", fr: int) -> "np.ndarray":
+def resample_to_16k(audio: "np.ndarray", fr: int) -> "np.ndarray":
     if fr == 16000 or len(audio) == 0:
         return audio.astype(np.float32)
     try:
@@ -130,7 +130,7 @@ def _resample_to_16k(audio: "np.ndarray", fr: int) -> "np.ndarray":
         ) from e
 
 
-def _load_wav_stdlib_16k_mono(path: Path) -> "np.ndarray":
+def load_wav_stdlib_16k_mono(path: Path) -> "np.ndarray":
     if np is None:
         raise RuntimeError("numpy required")
     with wave.open(str(path), "rb") as wf:
@@ -148,7 +148,7 @@ def _load_wav_stdlib_16k_mono(path: Path) -> "np.ndarray":
     return _resample_to_16k(audio, fr)
 
 
-def _load_wav_scipy_16k_mono(path: Path) -> "np.ndarray":
+def load_wav_scipy_16k_mono(path: Path) -> "np.ndarray":
     from scipy.io import wavfile
 
     fr, data = wavfile.read(str(path))
@@ -156,7 +156,7 @@ def _load_wav_scipy_16k_mono(path: Path) -> "np.ndarray":
     return _resample_to_16k(audio, int(fr))
 
 
-def _load_soundfile_16k_mono(path: Path) -> "np.ndarray":
+def load_soundfile_16k_mono(path: Path) -> "np.ndarray":
     import soundfile as sf
 
     data, fr = sf.read(str(path), always_2d=False, dtype="float32")
@@ -167,7 +167,7 @@ def _load_soundfile_16k_mono(path: Path) -> "np.ndarray":
     return _resample_to_16k(audio, int(fr))
 
 
-def _try_loaders(path: Path, loaders: List[Callable[[Path], "np.ndarray"]]) -> Optional["np.ndarray"]:
+def try_loaders(path: Path, loaders: List[Callable[[Path], "np.ndarray"]]) -> Optional["np.ndarray"]:
     for fn in loaders:
         try:
             return fn(path)
@@ -176,7 +176,7 @@ def _try_loaders(path: Path, loaders: List[Callable[[Path], "np.ndarray"]]) -> O
     return None
 
 
-def _load_audio_as_numpy_no_ffmpeg(path: Path) -> Optional["np.ndarray"]:
+def load_audio_as_numpy_no_ffmpeg(path: Path) -> Optional["np.ndarray"]:
     if np is None:
         return None
     ext = path.suffix.lower()
@@ -204,7 +204,7 @@ def _load_audio_as_numpy_no_ffmpeg(path: Path) -> Optional["np.ndarray"]:
     return _try_loaders(path, loaders)
 
 
-def _load_audio_ffmpeg_16k_mono(path: Path) -> "np.ndarray":
+def load_audio_ffmpeg_16k_mono(path: Path) -> "np.ndarray":
     if np is None:
         raise RuntimeError("numpy required")
     if not _ensure_ffmpeg_on_path():
@@ -245,7 +245,7 @@ def _load_audio_ffmpeg_16k_mono(path: Path) -> "np.ndarray":
             pass
 
 
-def _load_audio_as_numpy(path: Path) -> "np.ndarray":
+def load_audio_as_numpy(path: Path) -> "np.ndarray":
     arr = _load_audio_as_numpy_no_ffmpeg(path)
     if arr is not None:
         logger.info("Loaded audio as numpy array without ffmpeg")
@@ -253,7 +253,7 @@ def _load_audio_as_numpy(path: Path) -> "np.ndarray":
     return _load_audio_ffmpeg_16k_mono(path)
 
 
-def _prepare_audio_input(path: Path) -> Union[str, Any]:
+def prepare_audio_input(path: Path) -> Union[str, Any]:
     arr = _load_audio_as_numpy_no_ffmpeg(path)
     if arr is not None:
         logger.info("Loaded audio as numpy array (no ffmpeg)")
@@ -264,11 +264,13 @@ def _prepare_audio_input(path: Path) -> Union[str, Any]:
 
 
 def _rms_energy(audio: "np.ndarray") -> float:
+    if np is None or audio is None or len(audio) == 0:
+        return 0.0
     audio32 = np.asarray(audio, dtype=np.float32)
     return float(np.sqrt(np.mean(audio32 * audio32)))
 
 
-def _segment_audio_by_silence(
+def segment_audio_by_energy(
     audio: "np.ndarray",
     *,
     sample_rate: int,
@@ -345,7 +347,7 @@ def _segment_audio_by_silence(
     return segments
 
 
-def _fixed_size_segments(
+def fixed_size_segments(
     audio: "np.ndarray",
     *,
     sample_rate: int,
@@ -365,7 +367,7 @@ def _fixed_size_segments(
     return segments
 
 
-def _load_whisper_model(model_size: str) -> Any:
+def load_whisper_model(model_size: str) -> Any:
     if whisper is None:
         raise RuntimeError("Install openai-whisper")
     with _WHISPER_LOCK:
@@ -378,189 +380,3 @@ def _load_whisper_model(model_size: str) -> Any:
             raise RuntimeError(f"Failed to load Whisper model: {e}") from e
         _WHISPER_MODELS[model_size] = model
         return model
-
-
-def _transcribe_with_model(
-    model: Any,
-    audio_input: Union[str, Any],
-    *,
-    language: Optional[str] = None,
-    task: str = "transcribe",
-    initial_prompt: Optional[str] = None,
-    fp16: Optional[bool] = None,
-) -> Dict[str, Any]:
-    kwargs: Dict[str, Any] = {"task": task}
-    if language:
-        kwargs["language"] = language
-    prompt = (initial_prompt or "").strip()
-    if prompt:
-        kwargs["initial_prompt"] = prompt
-    if fp16 is not None:
-        kwargs["fp16"] = fp16
-    else:
-        try:
-            import torch
-
-            kwargs["fp16"] = bool(torch.cuda.is_available())
-        except ImportError:
-            kwargs["fp16"] = False
-
-    try:
-        return model.transcribe(audio_input, **kwargs)
-    except FileNotFoundError as e:
-        raise RuntimeError(_FFMPEG_HINT) from e
-    except OSError as e:
-        win = getattr(e, "winerror", None)
-        if win == 2 or getattr(e, "errno", None) == 2:
-            raise RuntimeError(_FFMPEG_HINT) from e
-        logger.exception("Whisper transcribe")
-        raise RuntimeError(f"Transcription failed: {e}") from e
-    except Exception as e:
-        logger.exception("Whisper transcribe")
-        raise RuntimeError(f"Transcription failed: {e}") from e
-
-
-def _simplify_whisper_segments(raw_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    simplified: List[Dict[str, Any]] = []
-    for raw in raw_segments or []:
-        text = str(raw.get("text") or "").strip()
-        if not text:
-            continue
-        start_sec = float(raw.get("start") or 0.0)
-        end_sec = float(raw.get("end") or start_sec)
-        end_sec = max(start_sec, end_sec)
-        simplified.append(
-            {
-                "start_sec": round(start_sec, 3),
-                "end_sec": round(end_sec, 3),
-                "duration_sec": round(end_sec - start_sec, 3),
-                "text": text,
-            }
-        )
-    return simplified
-
-
-def _speech_text_from_segments(segments: List[Dict[str, Any]]) -> str:
-    return " ".join(seg["text"] for seg in segments if str(seg.get("text") or "").strip()).strip()
-
-
-def transcribe_audio_with_segments(
-    audio_path: str,
-    *,
-    model_size: str = "base",
-    language: Optional[str] = None,
-    task: str = "transcribe",
-    initial_prompt: Optional[str] = None,
-    fp16: Optional[bool] = None,
-    enable_silence_segmentation: bool = True,
-    silence_threshold: float = 0.0004,
-    silence_duration_sec: float = 1.0,
-    min_segment_sec: float = 2.0,
-    max_segment_sec: float = 20.0,
-    analysis_window_sec: float = 0.1,
-    skip_energy_threshold: float = 0.00012,
-) -> Dict[str, Any]:
-    path = Path(audio_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Audio not found: {audio_path}")
-
-    model = _load_whisper_model(model_size)
-
-    if not enable_silence_segmentation:
-        audio_input = _prepare_audio_input(path)
-        result = _transcribe_with_model(
-            model,
-            audio_input,
-            language=language,
-            task=task,
-            initial_prompt=initial_prompt,
-            fp16=fp16,
-        )
-        speech_text = (result.get("text") or "").strip()
-        speech_segments = _simplify_whisper_segments(result.get("segments") or [])
-        return {
-            "speech_text": speech_text,
-            "speech_segments": speech_segments,
-        }
-
-    audio = _load_audio_as_numpy(path)
-    sample_rate = 16000
-    raw_segments = _segment_audio_by_energy(
-        audio,
-        sample_rate=sample_rate,
-        silence_threshold=silence_threshold,
-        silence_duration_sec=silence_duration_sec,
-        min_segment_sec=min_segment_sec,
-        max_segment_sec=max_segment_sec,
-        analysis_window_sec=analysis_window_sec,
-    )
-    if not raw_segments:
-        raw_segments = _fixed_size_segments(audio, sample_rate=sample_rate, max_segment_sec=max_segment_sec)
-
-    speech_segments: List[Dict[str, Any]] = []
-    for segment_audio, start_sec, duration_sec in raw_segments:
-        if _rms_energy(segment_audio) < float(skip_energy_threshold):
-            continue
-        result = _transcribe_with_model(
-            model,
-            segment_audio,
-            language=language,
-            task=task,
-            initial_prompt=initial_prompt,
-            fp16=fp16,
-        )
-        text = str(result.get("text") or "").strip()
-        if not text:
-            continue
-        end_sec = start_sec + duration_sec
-        speech_segments.append(
-            {
-                "start_sec": round(float(start_sec), 3),
-                "end_sec": round(float(end_sec), 3),
-                "duration_sec": round(float(duration_sec), 3),
-                "text": text,
-            }
-        )
-
-    return {
-        "speech_text": _speech_text_from_segments(speech_segments),
-        "speech_segments": speech_segments,
-    }
-
-
-def run_module_c(
-    audio_path: str,
-    config: Optional[dict] = None,
-) -> Dict[str, Any]:
-    whisper_opts = (config or {}).get("whisper", {})
-    model_size = str(whisper_opts.get("model_size", "base"))
-    lang_raw = whisper_opts.get("language")
-    language = None if lang_raw is None else str(lang_raw).strip() or None
-    task = str(whisper_opts.get("task", "transcribe")).strip() or "transcribe"
-    ip_raw = whisper_opts.get("initial_prompt")
-    initial_prompt = None if ip_raw is None else str(ip_raw).strip() or None
-    fp16_opt = whisper_opts.get("fp16")
-    fp16 = fp16_opt if isinstance(fp16_opt, bool) else None
-    out: Dict[str, Any] = {"speech_text": "", "speech_segments": [], "error": None}
-    try:
-        result = transcribe_audio_with_segments(
-            audio_path,
-            model_size=model_size,
-            language=language,
-            task=task,
-            initial_prompt=initial_prompt,
-            fp16=fp16,
-            enable_silence_segmentation=bool(whisper_opts.get("enable_silence_segmentation", True)),
-            silence_threshold=float(whisper_opts.get("silence_threshold", 0.0004)),
-            silence_duration_sec=float(whisper_opts.get("silence_duration_sec", 1.0)),
-            min_segment_sec=float(whisper_opts.get("min_segment_sec", 2.0)),
-            max_segment_sec=float(whisper_opts.get("max_segment_sec", 20.0)),
-            analysis_window_sec=float(whisper_opts.get("analysis_window_sec", 0.1)),
-            skip_energy_threshold=float(whisper_opts.get("skip_energy_threshold", 0.00012)),
-        )
-        out["speech_text"] = result.get("speech_text", "")
-        out["speech_segments"] = result.get("speech_segments", [])
-    except Exception as e:
-        out["error"] = str(e)
-        logger.exception("run_module_c")
-    return out

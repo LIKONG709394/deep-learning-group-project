@@ -306,7 +306,7 @@ def _refine_kept_lines_after_filter(kept: List[str], cfg: dict) -> List[str]:
     return out
 
 
-def _build_filter_board_lines_messages(
+def build_filter_board_lines_messages(
     lines: List[str],
     speech_text: str,
 ) -> List[Dict[str, str]]:
@@ -339,62 +339,26 @@ def _build_filter_board_lines_messages(
     ]
 
 
-def run_deepseek_filter_board_lines(
-    lines: List[str],
-    speech_text: str,
-    config: Optional[dict] = None,
-) -> Dict[str, Any]:
+
+def run_deepseek_filter_board_lines(lines, speech_text, config, env):
     """Use DeepSeek to drop meaningless OCR lines. On failure, returns original lines."""
-    raw_ds = (config or {}).get("deepseek")
-    cfg = raw_ds if isinstance(raw_ds, dict) else {}
-    model = str(cfg.get("model", DEFAULT_MODEL))
-    out_base: Dict[str, Any] = {
+    out_base = {
         "enabled": False,
-        "model": model,
+        "model": config.deepseek_model,
         "kept_lines": list(lines),
         "dropped_lines": [],
         "reason": None,
         "error": None,
     }
-    if not bool(cfg.get("filter_board_lines", False)):
-        return out_base
-
-    cleaned = [str(x).strip() for x in lines if str(x).strip()]
-    out_base["enabled"] = True
-    if not cleaned:
-        out_base["kept_lines"] = []
-        return out_base
-
-    api_key_env = str(cfg.get("api_key_env", DEFAULT_API_KEY_ENV) or DEFAULT_API_KEY_ENV)
-    api_key = _resolve_api_key(api_key_env)
-    if not api_key:
-        out_base["error"] = (
-            f"Missing DeepSeek API key for filter: expected `{api_key_env}` in {_DOTENV_PATH} or environment"
-        )
-        return out_base
-
-    max_lines = max(10, int(cfg.get("filter_board_lines_max_lines", 120) or 120))
-    work_lines = cleaned[:max_lines]
-    truncated = len(cleaned) > max_lines
-    if truncated:
-        logger.warning(
-            "DeepSeek board line filter: truncating %s lines to %s for API size",
-            len(cleaned),
-            max_lines,
-        )
-
-    endpoint = _normalize_endpoint(str(cfg.get("base_url", DEFAULT_BASE_URL)))
-    temperature = float(cfg.get("filter_temperature", cfg.get("temperature", 0.1)))
-    timeout_sec = float(cfg.get("filter_timeout_sec", cfg.get("timeout_sec", 45)))
-    messages = _build_filter_board_lines_messages(work_lines, speech_text)
-
+    out_base["enabled"] = True    
+    endpoint = _normalize_endpoint(DEFAULT_BASE_URL)
+    messages = _build_filter_board_lines_messages(lines, speech_text)
     try:
         response_json = _call_deepseek_chat_completion(
             endpoint=endpoint,
-            api_key=api_key,
-            model=model,
-            temperature=temperature,
-            timeout_sec=timeout_sec,
+            api_key=env.deepseek,
+            model=config.deepseek_model,
+            timeout_sec=config.deepseek_timeout_sec,
             messages=messages,
         )
         content = _extract_message_content(response_json)

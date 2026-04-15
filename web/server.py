@@ -26,7 +26,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from blackboard_analytics.config_loader import default_config_path, load_pipeline_config  # noqa: E402
-from blackboard_analytics.pipeline import run_from_frame_and_audio, run_from_video_file  # noqa: E402
+from blackboard_analytics.pipelineOld import run_from_frame_and_audio, run_from_video_file  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

@@ -3,8 +3,6 @@ yolo:
   conf: 0.25
   iou: 0.45
   blackboard_class_id: 0
-
-yolo_world:
   enabled: false
   model: "yolov8s-worldv2.pt"
   conf: 0.25
@@ -17,6 +15,9 @@ yolo_world:
     - "lecture slide on monitor"
     - "slideshow content area"
     - "video player content"
+    - "blackboard"
+    - "whiteboard"
+    - "paper"
 
 trocr:
   # OCR backend for board ROI: trocr | easyocr | paddleocr (PPT/slides: easyocr or paddleocr recommended)
@@ -28,10 +29,11 @@ trocr:
   model_name: "microsoft/trocr-base-handwritten"
   printed_model_name: "microsoft/trocr-base-printed"
   # Video: treat slides as printed first (uses ocr_engine on ROI; TrOCR printed model only if ocr_engine=trocr).
+  
   video_prefer_printed_model: true
   # If primary OCR on a keyframe looks empty or useless, try full-frame handwriting TrOCR once.
   video_enable_handwriting_fallback: true
-  video_enable_printed_fallback: true
+  video_enable_printed_fallback: true  
   device: auto
 
 whisper:
@@ -101,3 +103,6 @@ deepseek:
   filter_refine_post_process: true
   filter_refine_ascii_only: true
   filter_refine_drop_singleton_letters: true
+
+debug:
+  enabled: true

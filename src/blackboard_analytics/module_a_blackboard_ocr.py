@@ -605,8 +605,6 @@ def run_module_a(
     det_iou = float(yolo_opts.get("iou", 0.45))
     board_class = int(yolo_opts.get("blackboard_class_id", 0))
     handwriting_model = str(trocr_opts.get("model_name", TROCR_DEFAULT))
-    trocr_dev = parse_trocr_device_option(trocr_opts.get("device", "auto"))
-    ocr_engine = normalize_ocr_engine_name(trocr_opts.get("ocr_engine", "trocr"))
     raw_langs = trocr_opts.get("easyocr_languages")
     if isinstance(raw_langs, str):
         easy_langs: Optional[List[str]] = [raw_langs.strip()] if raw_langs.strip() else None
@@ -617,42 +615,26 @@ def run_module_a(
     else:
         easy_langs = None
     paddle_lang = str(trocr_opts.get("paddleocr_lang", "en") or "en")
+    trocr_dev = parse_trocr_device_option(trocr_opts.get("device", "auto"))  
+
+    ocr_engine = normalize_ocr_engine_name(trocr_opts.get("ocr_engine", "trocr"))   
 
     out: dict = {"texts": [], "roi": None, "roi_method": None, "error": None}
-    try:
-        if roi_override is None:
-            roi, method = detect_blackboard_roi(
-                image_bgr,
-                yolo_weights_path=weights,
-                conf=det_conf,
-                iou=det_iou,
-                blackboard_class_id=board_class,
-                yolo_world=yolo_world_opts,
-            )
-        else:
-            roi = coerce_roi_box(roi_override, image_shape=image_bgr.shape)
-            method = roi_method_override or "provided"
-        out["roi"] = roi.as_tuple()
-        out["roi_method"] = method
-        trocr_engine = (
-            engine_override if ocr_engine == "trocr" and engine_override is not None else None
-        )
-        out["texts"] = recognize_blackboard_handwriting(
-            image_bgr,
-            yolo_weights_path=weights,
-            yolo_world=yolo_world_opts,
-            trocr_model_name=handwriting_model,
-            trocr_device=trocr_dev,
-            conf=det_conf,
-            iou=det_iou,
-            blackboard_class_id=board_class,
-            engine=trocr_engine,
-            board_region=roi,
-            ocr_engine=ocr_engine,
-            easyocr_languages=easy_langs,
-            paddleocr_lang=paddle_lang,
-        )
-    except Exception as e:
-        out["error"] = str(e)
-        logger.exception("run_module_a")
-    return out
+    trocr_engine = (
+        engine_override if ocr_engine == "trocr" and engine_override is not None else None
+    )
+    out["texts"] = recognize_blackboard_handwriting(
+        image_bgr,
+        yolo_weights_path=weights,
+        yolo_world=yolo_world_opts,
+        trocr_model_name=handwriting_model,
+        trocr_device=trocr_dev,
+        conf=det_conf,
+        iou=det_iou,
+        blackboard_class_id=board_class,
+        engine=trocr_engine,
+        board_region=roi,
+        ocr_engine=ocr_engine,
+        easyocr_languages=easy_langs,
+        paddleocr_lang=paddle_lang,
+    )
