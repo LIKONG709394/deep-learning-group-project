@@ -1,0 +1,67 @@
+# ============================================================
+# Catcher — Requirements
+# Compatible with NVIDIA 30-series (Ampere) and 50-series (Blackwell)
+# Python 3.10+  |  CUDA 12.1+ recommended
+# ============================================================
+
+# --- Core CV ---
+opencv-python>=4.9.0
+numpy>=1.26.0
+Pillow>=10.0.0
+
+# --- YOLO (blackboard ROI detection) ---
+ultralytics>=8.2.0
+
+# --- OCR engines ---
+easyocr>=1.7.1
+paddleocr>=2.7.3
+paddlepaddle-gpu>=2.6.1          # swap to paddlepaddle (CPU) if no GPU
+transformers>=4.40.0             # TrOCR
+
+# --- Whisper ASR ---
+openai-whisper>=20231117
+ffmpeg-python>=0.2.0
+
+# --- Semantic alignment ---
+sentence-transformers>=3.0.0
+
+# --- PDF report ---
+reportlab>=4.1.0
+
+# --- DeepSeek filter (optional) ---
+# No extra package needed — uses urllib (stdlib)
+
+# --- Audio processing ---
+scipy>=1.13.0
+soundfile>=0.12.1
+
+# --- PyTorch (CUDA 12.1 — works on 30xx and 50xx) ---
+# Install SEPARATELY with the right CUDA version:
+#
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# For 50-series (Blackwell / CUDA 12.8+):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# DO NOT put torch here — let the user install it with the right CUDA index
+
+# --- Config ---
+PyYAML>=6.0.1
+
+# --- Dev / testing ---
+pytest>=8.0.0
+
+opencv-python
+numpy
+pyyaml
+reportlab
+torch
+torchvision
+torchaudio
+openai-whisper
+ultralytics
+transformers
+scipy
+soundfile
+easyocr
+paddleocr

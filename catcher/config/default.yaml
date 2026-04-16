@@ -1,0 +1,121 @@
+# ============================================================
+# Catcher — Default Pipeline Configuration
+# Edit this file to tune the pipeline without touching source code
+# ============================================================
+
+# --- Video processing ---
+video:
+  # Fast mode: fewer keyframes, smaller Whisper model — good for quick testing
+  fast_mode: false
+
+  # Keyframe extraction
+  max_keyframes: 20
+  min_keyframe_score: 40.0
+  min_change_ratio: 0.08
+
+  # Pause detection (seconds)
+  silence_duration_sec: 1.5
+  min_seg_sec: 1.0
+  max_seg_sec: 30.0
+
+  # Text presence gating (skip frames with no ink)
+  text_presence_enabled: true
+  text_presence_min_ink_ratio: 0.002
+  text_presence_min_linespans: 2
+  text_presence_min_components: 8
+
+  # Deduplication cache (skip visually identical frames)
+  dedupe_enabled: true
+  dedupe_similarity_threshold: 0.985
+  dedupe_min_interval_sec: 8.0
+  dedupe_cache_size: 12
+
+  # Board text merge / noise filter
+  merge_substring_min_len: 8
+  filter_noise_board_lines: false
+  noise_line_min_chars: 14
+  noise_line_min_letters: 5
+
+  # OCR diagnostics in output JSON
+  ocr_diagnostics: true
+
+
+# --- OCR ---
+trocr:
+  # Primary OCR engine: easyocr | paddleocr | trocr
+  ocr_engine: easyocr
+
+  # EasyOCR language codes
+  easyocr_languages:
+    - en
+
+  # PaddleOCR language
+  paddleocr_lang: en
+
+  # TrOCR model names
+  default_model: microsoft/trocr-base-handwritten
+  printed_model: microsoft/trocr-base-printed
+
+  # Fallback models
+  handwriting_model_fallback: microsoft/trocr-base-handwritten
+  printed_model_fallback: microsoft/trocr-base-printed
+
+  # Device: auto | cuda | cpu
+  device: auto
+
+  # Video-specific OCR behaviour
+  video_prefer_printed_model: false
+  video_enable_printed_fallback: true
+  video_enable_handwriting_fallback: true
+
+
+# --- YOLO (blackboard ROI detection) ---
+yolo:
+  weights_path: models/best.pt
+  conf: 0.25
+  iou: 0.45
+  blackboard_class_id: 0
+  # model: yolov8n.pt   # uncomment to use a base model instead of fine-tuned weights
+
+
+# --- Clarity scorer ---
+clarity:
+  laplacian_clear_min: 300.0
+  laplacian_messy_max: 80.0
+  stroke_variance_messy_min: 2.5
+
+
+# --- Whisper ASR ---
+whisper:
+  # Model size: tiny | base | small | medium | large
+  model_size: base
+  language: null          # null = auto-detect
+  task: transcribe        # transcribe | translate
+  initial_prompt: null    # optional prompt to guide transcription
+  fp16: null              # null = auto (true on CUDA, false on CPU)
+
+
+# --- DeepSeek filter (optional) ---
+# Requires DEEPSEEK_API_KEY environment variable
+deepseek:
+  # Filter noisy OCR lines using DeepSeek LLM
+  filter_board_lines: false
+  model: deepseek-chat
+  timeout_sec: 30
+
+
+# --- Semantic alignment (SBERT) ---
+semantic:
+  high_match_min: 0.72
+  partial_min: 0.45
+  keyword_overlap_high: 0.35
+
+sbert:
+  model_name: all-MiniLM-L6-v2
+
+
+# --- Debug ---
+debug:
+  enabled: false
+  # When enabled, saves annotated keyframe images and metadata.json
+  # to a debug folder next to the output PDF
