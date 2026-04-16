@@ -1,0 +1,151 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Environment / secrets ---
+.env
+.env.*
+*.env
+secrets.yml
+secrets.yaml
+config.local.yml
+config.local.yaml
+
+# --- Python tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+
+# --- Build / packaging ---
+build/
+dist/
+site/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+wheels/
+
+# --- Notebook / IDE / editor ---
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+logs/
+log/
+
+# --- Temporary files ---
+tmp/
+temp/
+tmp*/
+temp*/
+*.tmp
+*.temp
+
+# --- Project outputs ---
+output/
+outputs/
+runs/
+artifacts/
+reports/
+
+# --- Media generated during pipeline ---
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
+*.gif
+*.pdf
+
+# --- Keep sample/demo assets if you want ---
+# !assets/
+# !demo/
+# !sample_data/
+
+# --- ML / OCR / model caches ---
+models/
+checkpoints/
+weights/
+pretrained/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.bin
+*.safetensors
+
+# --- Torch / Hugging Face / Whisper caches ---
+.huggingface/
+transformers_cache/
+hf_cache/
+whisper_cache/
+
+# --- Paddle / OCR caches ---
+.paddleocr/
+.paddlehub/
+.ppocr/
+ocr_cache/
+
+# --- Data folders ---
+data/
+datasets/
+
+# --- SQLite / local db ---
+*.sqlite
+*.sqlite3
+*.db
+
+# --- FFmpeg / local binaries if copied in ---
+ffmpeg/
+ffprobe/
+bin/
+
+# --- Keep source code and config templates ---
+!requirements.txt
+!README.md
+!.gitignore
+!*.example.yml
+!*.example.yaml
+!config.example.yml
+!config.example.yaml
