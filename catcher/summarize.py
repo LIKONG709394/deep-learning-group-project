@@ -1,19 +1,53 @@
+"""
+Multi-Engine Text Summarization & OCR
+=====================================
+
+This module serves as the intelligence layer for visual text extraction within 
+the Teaching Analysis System. It combines multiple OCR engines (EasyOCR, 
+PaddleOCR, and TrOCR) to accurately transcribe board content, while applying 
+NLP-based filtering to refine and deduplicate the extracted information.
+
+Key Features:
+    * Hybrid OCR Strategy: Dynamically utilizes TrOCR for handwriting and 
+      PaddleOCR/EasyOCR for printed text or mathematical symbols.
+    * Intelligence Filtering: Uses perplexity scoring (GPT-2) to prune 
+      OCR noise and low-confidence transcriptions.
+    * Geometric Text Analysis: Implements line segmentation and height-based 
+      filtering to preserve the spatial hierarchy of board content.
+    * LLM Integration: Interfaces with DeepSeek for semantic synthesis and 
+      relevance classification of teaching materials.
+    * Thread-Safe Model Loading: Manages high-memory-demand models (Transformers, 
+      Paddle) via global caching and resource locks.
+
+Dependencies:
+    * transformers: For TrOCR (Vision-Encoder-Decoder) and perplexity models.
+    * paddleocr & easyocr: For robust multi-engine text recognition.
+    * neattext: For cleaning and normalizing extracted instructional text.
+    * torch: For managing model weights and GPU-accelerated inference.
+
+Author: [Lai Tsz Yeung/Group J]
+Date: 2026
+License: MIT
+"""
+import os
 from datetime import time
 import json
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Any, Tuple, Optional, Set
+from typing import List, Dict, Any, Tuple, Optional, Set, Union
 
 import cv2
 import neattext.functions as nfx
+import numpy as np
+import paddle
 import torch
 from requests import request
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrOCRProcessor, VisionEncoderDecoderModel
 import easyocr
 from paddleocr import PaddleOCR
 
-from capture2 import crop_roi
+from capture import ROIBox, coerce_roi_box, crop_roi, preprocess_image
 
 # Assuming these are imported from your custom modules
 # from m.capture import ROIBox, crop_roi
@@ -22,7 +56,7 @@ from capture2 import crop_roi
 
 # --- Configuration Constants ---
 DODEDUPE = True  # Fixed missing '='
-MATH_SYMBOLS: Set[str] = set("=+-*/×÷^()[]{}<>∫∑√πΔ·.,:;%")
+MATH_SYMBOLS: Set[str] = set("=+-*/??÷^()[]{}<>?????????????·.,:;%")
 FILTER_NOISITY_TEXT = True
 
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
@@ -43,19 +77,20 @@ _EASY_LOCK = threading.Lock()
 _PADDLE_INSTANCES = {}
 _PADDLE_LOCK = threading.Lock()
 
+_TROCR_INSTANCES = {}
+_TROCR_LOCK = threading.Lock()
+
+TROCR_DEFAULT = "microsoft/trocr-base-handwritten"
+TROCR_PRINTED = "microsoft/trocr-base-printed"
 
 # --- Utility Functions ---
 
 def _get_device() -> str:
-    """Returns the optimal device for PyTorch/Models."""
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
+    if paddle.device.is_compiled_with_cuda() and paddle.device.get_device().startswith("gpu"):
+        return "gpu"
     return "cpu"
 
-
-def _dedupe_subsumed_lines(lines: List[str], *, min_len: int = 8) -> List[str]:
+def _dedupe_subsumed_lines(lines: List[str], *, min_len: int = 1) -> List[str]:
     items = [(s.strip(), s.strip().casefold()) for s in lines if s and s.strip()]
     if len(items) < 2:
         return [text for text, _ in items]
@@ -89,7 +124,7 @@ def _get_perplexity_model(device: str):
         return model, tokenizer
 
 
-def get_preplexity_input(text: str, device: str) -> Tuple[Optional[Any], Optional[Dict]]:
+def get_perplexity_input(text: str, device: str) -> Tuple[Optional[Any], Optional[Dict]]:
     model, tokenizer = _get_perplexity_model(device)
     if not text.strip():
         return None, None
@@ -100,8 +135,7 @@ def get_preplexity_input(text: str, device: str) -> Tuple[Optional[Any], Optiona
 
 
 def _calculate_perplexity(text: str, device: str) -> float:
-    print("_calculate_perplexity")
-    model, inputs = get_preplexity_input(text, device)
+    model, inputs = get_perplexity_input(text, device)
     if model is None or inputs is None:
         return float("inf")
         
@@ -119,7 +153,6 @@ def _calculate_perplexity(text: str, device: str) -> float:
     # 3. Manually calculate the cross entropy loss
     loss_fct = torch.nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-    print("calculate_perplexity_")
     return float(torch.exp(loss).item())
 
 
@@ -435,18 +468,24 @@ def extract(visual_pause: dict, config: dict) -> dict:
 
     out_dict = dict(visual_pause)
     if best_model:
-        out_dict["textlines"] = textual_pause_dict[best_model]["textlines"]
+        out_dict["altextlines"] = textual_pause_dict[best_model]["textlines"]
+        out_dict["textlines"] = _dedupe_subsumed_lines(textual_pause_dict[best_model]["textlines"])
         out_dict["ocr_rois"] = textual_pause_dict[best_model]["ocr_rois"]
         out_dict["paragraph"] = " ".join(out_dict["textlines"])  # Fixed empty string join
     else:
+        out_dict["altextlines"] = []
         out_dict["textlines"] = []
         out_dict["ocr_rois"] = []
         out_dict["paragraph"] = ""
+    
         
+    """
     global idd
     print("save_annotated_image")
     save_annotated_image(out_dict["frame_bgr"], out_dict["ocr_rois"], str(idd)+".jpg")
     idd+=1
+    """
+    visual_pause["frame_bgr"] = None
 
     return out_dict    
 
@@ -460,11 +499,8 @@ def match(visual_pause: dict, tokenized_segments: List[dict], config: dict) -> d
     original_textlines = visual_pause.get("textlines", [])
     original_rois = visual_pause.get("ocr_rois", [])
     
-    filtered = _dedupe_subsumed_lines(original_textlines)
     
     for i, text in enumerate(original_textlines):
-        if text not in filtered: 
-            continue
             
         clean_val = text
         clean_val = nfx.remove_urls(clean_val)
@@ -540,3 +576,151 @@ def save_annotated_image(img_bgr, boxes, output_path):
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(output_path, out)
     return output_path
+
+def _pil_line_from_gray(gray_line: np.ndarray, target_h: int = 384) -> Any:
+    from PIL import Image
+
+    g = gray_line
+    if g.size == 0:
+        raise ValueError("Empty line image")
+    h, w = g.shape[:2]
+    if h < 1 or w < 1:
+        raise ValueError("Invalid line dimensions")
+    scale = target_h / float(h)
+    new_w = max(1, int(w * scale))
+    resized = cv2.resize(g, (new_w, target_h), interpolation=cv2.INTER_CUBIC)
+    return Image.fromarray(resized).convert("RGB")
+
+def _prepare_ocr_inputs(
+    image_bgr: np.ndarray,
+    roi: Union[ROIBox, Tuple[int, int, int, int], List[int]],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    roi_box = coerce_roi_box(roi, image_shape=image_bgr.shape)
+    board_crop = crop_roi(image_bgr, roi_box)
+    gray_enhanced, ink_for_lines = preprocess_image(board_crop)
+    return board_crop, gray_enhanced, ink_for_lines
+
+
+def segment_text_lines(
+    binary_inv_roi: np.ndarray,
+    *,
+    min_line_height: int = 8,
+    min_gap: int = 5,
+    pad_y: int = 4,
+) -> List[Tuple[int, int]]:
+    # row sums ??? line bands (y0,y1) in ROI coords
+    h, w = binary_inv_roi.shape[:2]
+    proj = (binary_inv_roi > 0).astype(np.float32).sum(axis=1)
+    threshold = max(1.0, 0.02 * w)
+    in_line = False
+    start = 0
+    lines: List[Tuple[int, int]] = []
+    for y in range(h):
+        if proj[y] >= threshold:
+            if not in_line:
+                start = y
+                in_line = True
+        else:
+            if in_line and y - start >= min_line_height:
+                y0 = max(0, start - pad_y)
+                y1 = min(h, y + pad_y)
+                lines.append((y0, y1))
+            in_line = False
+    if in_line and h - start >= min_line_height:
+        y0 = max(0, start - pad_y)
+        y1 = h
+        lines.append((y0, y1))
+
+    merged: List[Tuple[int, int]] = []
+    for y0, y1 in lines:
+        if not merged:
+            merged.append((y0, y1))
+            continue
+        py0, py1 = merged[-1]
+        if y0 - py1 < min_gap:
+            merged[-1] = (py0, y1)
+        else:
+            merged.append((y0, y1))
+    return merged
+
+class TrOCRHandwritingEngine:
+    # Models load on first use so importing this file stays light.
+
+    def __init__(self, model_name: str = TROCR_DEFAULT, device: Optional[str] = None) -> None:
+        self.model_name = model_name
+        # device: None = auto (CUDA if possible, else CPU; OOM on CUDA -> CPU)
+        self._device_pref = device
+        self._processor = None
+        self._model = None
+        self._device = None
+
+    def _try_order(self) -> List[str]:
+        pref = self._device_pref
+        if pref == "cpu":
+            return ["cpu"]
+        if pref == "cuda":
+            if torch is not None and torch.cuda.is_available():
+                return ["cuda"]
+            raise RuntimeError("trocr.device=cuda but CUDA is not available")
+        if torch is not None and torch.cuda.is_available():
+            return ["cuda", "cpu"]
+        return ["cpu"]
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
+        if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
+            raise RuntimeError("Install torch and transformers")
+
+        order = self._try_order()
+        last_err: Optional[BaseException] = None
+        for dev_name in order:
+            with _TROCR_LOCK:
+                cached = _TROCR_BUNDLES.get((self.model_name, dev_name))
+            if cached is not None:
+                self._processor, self._model, self._device = cached
+                return
+            try:
+                local_only = has_hf_repo_cache(self.model_name)
+                processor = TrOCRProcessor.from_pretrained(
+                    self.model_name,
+                    local_files_only=local_only,
+                )
+                model = VisionEncoderDecoderModel.from_pretrained(
+                    self.model_name,
+                    local_files_only=local_only,
+                )
+                device_obj = torch.device(dev_name)
+                model.to(device_obj)
+                model.eval()
+                with _TROCR_LOCK:
+                    _TROCR_BUNDLES[(self.model_name, dev_name)] = (processor, model, device_obj)
+                self._processor = processor
+                self._model = model
+                self._device = device_obj
+                return
+            except Exception as e:
+                last_err = e
+                if dev_name == "cuda" and torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                if self._device_pref is None and dev_name == "cuda":
+                    continue
+                if self._device_pref == "cuda":
+                    raise RuntimeError(f"Failed to load TrOCR: {e}") from e
+                raise RuntimeError(f"Failed to load TrOCR: {e}") from e
+
+        raise RuntimeError(f"Failed to load TrOCR: {last_err}") from last_err
+
+    def decode_line(self, gray_line: np.ndarray) -> str:
+        self._ensure_loaded()
+        assert self._processor is not None and self._model is not None and self._device is not None
+        pil = _pil_line_from_gray(gray_line)
+        pixel_values = self._processor(images=pil, return_tensors="pt").pixel_values.to(self._device)
+        with torch.no_grad():
+            # Avoid transformers warning about default max_length=21; allow longer board lines.
+            gen_ids = self._model.generate(pixel_values, max_new_tokens=128)
+        text = self._processor.batch_decode(gen_ids, skip_special_tokens=True)[0]
+        return (text or "").strip()

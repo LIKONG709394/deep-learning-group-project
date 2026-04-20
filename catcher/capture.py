@@ -1,7 +1,34 @@
+"""
+Visual Teaching Activity Capture
+================================
+
+This module handles the visual processing component of the Teaching Analysis 
+System. It utilizes YOLO-based object detection to identify teaching surfaces 
+(blackboards/whiteboards) and monitors frame-by-frame changes to detect 
+meaningful pauses in writing or instruction.
+
+Key Features:
+    * Thread-safe YOLO model management and caching for ROI detection.
+    * Adaptive change detection using Laplacian variance and frame subtraction.
+    * ROI (Region of Interest) tracking and stabilization to handle camera jitter.
+    * Automated "pause" detection to trigger OCR and visual content analysis.
+    * Efficient image preprocessing and grayscale conversion for downstream OCR.
+
+Dependencies:
+    * ultralytics (YOLOv8): For real-time object detection and segmentation.
+    * opencv-python (cv2): For video stream handling and image transformations.
+    * torch: For GPU-accelerated model inference and tensor operations.
+    * numpy: For numerical matrix operations and frame delta analysis.
+
+Author: [Lai Tsz Yeung/Group J]
+Date: 2026
+License: MIT
+"""
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import threading
-from typing import Callable
+from typing import Callable, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -15,8 +42,37 @@ CHANGE_RATIO = 0.01
 AREA_REDUCE_R = 0.1
 _LAP_KERNEL = None
 
+_YOLO_LOCK = threading.Lock()
+_YOLO_MODELS = {}
+
+def load_yolo_model(weight_path: Union[str, Path], device: str) -> YOLO:
+    """
+    Loads and caches a YOLO model in a thread-safe manner.
+
+    Args:
+        weight_path: Path to the .pt model weights.
+        device: Device to load the model onto ('cuda' or 'cpu').
+
+    Returns:
+        YOLO: The cached Ultralytics YOLO model instance.
+    """
+    model_key = (str(weight_path), device)
+    
+    with _YOLO_LOCK:
+        cached = _YOLO_MODELS.get(model_key)
+        if cached is not None:
+            return cached
+        
+        try:
+            # Initialize model and move to the target device immediately
+            model = YOLO(str(weight_path)).to(device)
+            _YOLO_MODELS[model_key] = model
+            return model
+        except Exception as e:
+            raise RuntimeError(f"Failed to load YOLO model from {weight_path}: {e}")
+
 def _get_textarea_yolo(frame_bgr, weight_path, conf, iou, device):    
-    model = YOLO(str(weight_path)).to(device)
+    model = load_yolo_model(weight_path, device)
     results = model.predict(source=frame_bgr, conf=conf, iou=iou, verbose=False)
     return results    
 
@@ -77,7 +133,7 @@ def opencv_extract_frame_dicts(video_path, stride=5):
     fps = _getfps(capture)
     frame_index = -1
     frame_dicts = []
-    print(f"start read video{video_path}")
+    logging.info(f"start read video{video_path}")
     while True:        
         ok, frame = capture.read()
         if not ok: break
@@ -93,12 +149,12 @@ def opencv_extract_frame_dicts(video_path, stride=5):
     capture.release()
     return frame_dicts
 
-def getAbsTrait(frame_bgr, size):
+def get_abs_trait(frame_bgr, size):
     _, binary = preprocess_image(frame_bgr)
     resized = cv2.resize(binary, size, interpolation=cv2.INTER_AREA)
     return (resized > 32).astype(np.uint8) * 255
 
-def getRelTrait(previous_trait, current_trait):
+def get_rel_trait(previous_trait, current_trait):
     if previous_trait is None:
         return 1.0
     diff = cv2.absdiff(previous_trait, current_trait)
@@ -233,7 +289,7 @@ def preprocess_image(
     clahe = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=clahe_grid)
     gray_enhanced = clahe.apply(gray)
     
-    # Denoise after CLAHE only when boosting — boost amplifies compression noise
+    # Denoise after CLAHE only when boosting ??? boost amplifies compression noise
     if brightness_boost != 1.0:
         gray_enhanced = cv2.fastNlMeansDenoising(gray_enhanced, h=10)
     
@@ -250,11 +306,17 @@ def preprocess_image(
     return gray_enhanced, binary
 
 def _get_device():
-    print("Cuda version:", torch.version.cuda
-          if cuda.is_available() else "CUDA not available")
-    if cuda.is_available():
-        print("GPU name:", torch.cuda.get_device_name(0))    
     return "cuda" if cuda.is_available() else "cpu"
+
+def _pack_pause(start_timestamp, last_frame, last_detected, device, on_pause):
+    visual_pause = {"timestamp":start_timestamp,"frame_bgr":last_frame,"areas":[]}
+    for area in last_detected:
+        cropped = crop_roi(last_frame, area)
+        clarity = _evaluate_handwriting_clarity(cropped, device) 
+        visual_pause["areas"].append({"clarity":clarity,"roi":area})   
+    on_pause(visual_pause)
+    
+
 
 def capture(video_path: str, config:dict, on_pause:Callable):
     """
@@ -296,6 +358,7 @@ def capture(video_path: str, config:dict, on_pause:Callable):
     frame_index: int = 0
     last_trait: float = 0.0
     last_detected: list = []
+    last_detected_always: list = []
     last_frame: np.array = None
     start_timestamp: float = 0
     while True:        
@@ -303,9 +366,12 @@ def capture(video_path: str, config:dict, on_pause:Callable):
         if not ok: break
         timestamp = round(_gettimestamp(capture, frame_index, fps), 3)        
         frame_h, frame_w = frame_bgr.shape[:2]
-        frame_trait = np.sum(getAbsTrait(frame_bgr, CLARFY_SIZE))
         frame_index += 1
-        if frame_index !=0:
+        try:
+            frame_trait = np.sum(get_abs_trait(frame_bgr, CLARFY_SIZE))
+        except ZeroDivisionError:
+            continue
+        if frame_index !=1:
             if abs(last_trait - frame_trait)/last_trait < CHANGE_RATIO:
                 last_trait = frame_trait
                 continue
@@ -313,6 +379,7 @@ def capture(video_path: str, config:dict, on_pause:Callable):
                 continue
         yolo_prediction = _get_textarea_yolo(frame_bgr, weights_path, conf, iou, device)        
         captured_text_areas = _get_boxes(yolo_prediction, frame_w, frame_h)
+        last_detected_always = captured_text_areas
         borderROI = ROIBox(10000, 10000, 0, 0)
         if len(captured_text_areas) == 0: continue
         for box in captured_text_areas:
@@ -329,16 +396,12 @@ def capture(video_path: str, config:dict, on_pause:Callable):
                 renewed = True
         last_frame_area = current_area
         if renewed:
-            visual_pause = {"timestamp":start_timestamp,"frame_bgr":last_frame,"areas":[]}
-            for area in last_detected:
-                cropped = crop_roi(last_frame, area)
-                clarity = _evaluate_handwriting_clarity(cropped, device) 
-                visual_pause["areas"].append({"clarity":clarity,"roi":area})                
-            on_pause(visual_pause)
+            _pack_pause(start_timestamp, last_frame, last_detected, device, on_pause)
             start_timestamp = timestamp
         last_frame = frame_bgr
         last_detected = captured_text_areas
-        
+    _pack_pause(start_timestamp, last_frame, last_detected_always, device, on_pause)
+    capture.release()    
         
 
 @dataclass
@@ -368,3 +431,19 @@ def crop_roi(image: np.ndarray, roi: ROIBox) -> np.ndarray:
         raise ValueError("Invalid ROI")
     return image[y1:y2, x1:x2].copy()
     
+def coerce_roi_box(
+    roi: Union["ROIBox", Tuple[int, int, int, int], List[int]],
+    *,
+    image_shape: Optional[Tuple[int, ...]] = None,
+) -> "ROIBox":
+    if isinstance(roi, ROIBox):
+        box = roi
+    else:
+        if len(roi) != 4:
+            raise ValueError("ROI tuple/list must contain four integers")
+        box = ROIBox(*map(int, roi))
+    if image_shape is None:
+        return box
+    h, w = image_shape[:2]
+    return box.clip(w, h)
+

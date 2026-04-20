@@ -1,3 +1,29 @@
+"""
+Teaching Analysis Reporting & Evaluation
+========================================
+
+This module is responsible for the final stage of the Teaching Analysis 
+Pipeline. It aggregates data from the visual and auditory analysis modules 
+to generate structured reports, perform semantic alignment checks, and 
+provide pedagogical feedback via LLM integration.
+
+Key Features:
+    * Multi-format report generation (PDF, Word, and JSON) with styling.
+    * DeepSeek LLM integration for automated teaching verdict and feedback.
+    * Semantic alignment analysis between board-written text and spoken content.
+    * Robust tokenization and mathematical symbol handling for STEM content.
+    * Fallback mechanisms and error logging for API-dependent evaluations.
+
+Dependencies:
+    * reportlab: For dynamic PDF generation and custom layout management.
+    * python-docx: For programmatic creation of Microsoft Word reports.
+    * requests: For communicating with the DeepSeek/LLM REST API.
+    * transformers: For local semantic scoring and perplexity evaluation.
+
+Author: [Lai Tsz Yeung/Group J]
+Date: 2026
+License: MIT
+"""
 from __future__ import annotations
 
 import json
@@ -33,7 +59,7 @@ DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEFAULT_SBERT = "sentence-transformers/all-mpnet-base-v2"
 KEYWORD_OVERLAP_FOR_PARTIAL = 0.15
-MATH_SYMBOLS = set("=+-*/×÷^()[]{}<>∫∑√πΔ·.,:;%")
+MATH_SYMBOLS = set("=+-*/??÷^()[]{}<>?????????????·.,:;%")
 
 # ---------------------------------------------------------------------------
 # Tokenization / Overlap
@@ -82,7 +108,7 @@ class SemanticAligner:
         
         return float(sim)
 
-def _getAligmentModel(model_name: str) -> SemanticAligner:
+def _get_alignment_model(model_name: str) -> SemanticAligner:
     return SemanticAligner(model_name)
 
 def _judge_alignment(
@@ -114,6 +140,7 @@ def compare_board_and_speech(
     keyword_high: float = 0.35,
     aligner: Optional[SemanticAligner] = None,
 ) -> Dict[str, Any]:
+    print("compare_board_and_speech")
     sbert = aligner or SemanticAligner(model_name)
     try:
         cosine_similarity = sbert.similarity(board_text, speech_text)
@@ -168,7 +195,7 @@ def _build_filter_board_lines_messages(lines: List[str], speech_text: str) -> Li
         "3. When uncertain, prefer KEEP over DROP.\n\n"
         "Output requirements:\n"
         '- Return exactly one JSON object with these fields only:\n'
-        '  "kept_indices": array of integers — 0-based indices referring ONLY to the numbered list below\n'
+        '  "kept_indices": array of integers ??? 0-based indices referring ONLY to the numbered list below\n'
         '  "reason": one short sentence explaining the main noise you removed\n'
         "Preserve the order of indices as they appear in the list (ascending).\n\n"
         f"speech_text (context, may be empty):\n{(speech_text or '').strip() or '[EMPTY]'}\n\n"
@@ -202,6 +229,7 @@ def _build_alignment_messages(board_text: str, speech_text: str) -> List[Dict[st
         '  "score": a number from 0 to 100\n'
         '  "reason": a short explanation in one or two sentences\n'
         '  "evidence": an array of 2 to 5 short strings\n'
+        '  "summary" : a string of a summary of the video (board_text and speech_text came from the same video)\n'
         "- If the texts are empty or insufficient, give a cautious low-confidence style judgment rather than making things up.\n\n"
         f"board_text:\n{board_text.strip() or '[EMPTY]'}\n\n"
         f"speech_text:\n{speech_text.strip() or '[EMPTY]'}"
@@ -302,7 +330,8 @@ def _deepseek_communication(
     env: Any,
 ) -> Optional[Tuple[str, Dict[str, Any]]]:
     url = _normalize_endpoint(getattr(config, "deepseek_base_url", DEFAULT_BASE_URL))
-    api_key = getattr(env, "deepseek", os.getenv(DEFAULT_API_KEY_ENV, "")) or ""
+    api_key = getattr(env, "deepseek", os.getenv(DEFAULT_API_KEY_ENV, "sk-6a304dfb56ec43958e10ed366b8b961f")) or "sk-6a304dfb56ec43958e10ed366b8b961f"
+    print(api_key)
     if not api_key:
         logger.error("DeepSeek API key not provided")
         return None
@@ -348,13 +377,16 @@ def deepseek_alignment_evaluate(
     config: Any,
     env: Any,
 ) -> Optional[Dict[str, Any]]:
+    print("asking for summary")
     messages = _build_alignment_messages(board_text, speech_text)
     result = _deepseek_communication(messages, config, env)
     if result is None:
         return None
     _, parsed = result
     if not isinstance(parsed, dict):
+        print("no parsed")
         return None
+    print(parsed)
     return parsed
 
 # ---------------------------------------------------------------------------
@@ -381,7 +413,7 @@ def _register_cjk_font() -> str:
 
 def _build_teaching_feedback_pdf(
     output_path: str, *, board_lines: List[str], clarity: Dict,
-    alignment: Dict, speech_text: str, module_errors: Optional[Dict] = None,
+    dsalignment: Dict, alignment: Dict, speech_text: str, module_errors: Optional[Dict] = None,
 ) -> str:
     font = _register_cjk_font()
     path = Path(output_path)
@@ -447,9 +479,18 @@ def _build_teaching_feedback_pdf(
     else:
         draw_line("(skipped or unavailable)", indent=10)
 
+    draw_line("5. Summary")
+    if dsalignment:
+        st = dsalignment.get('summary') or "(missing or summarize failed)"
+        for chunk in range(0, len(st), 90):
+            draw_line(st[chunk : chunk + 90], indent=10)
+    else:
+        draw_line("(skipped or unavailable)", indent=10)
+
+
     if module_errors:
         y -= 8
-        draw_line("5. Steps that reported an error")
+        draw_line("6. Steps that reported an error")
         for step_name, message in module_errors.items():
             if message:
                 draw_line(f"{step_name}: {message}", indent=10)
@@ -460,7 +501,7 @@ def _build_teaching_feedback_pdf(
 
 def _build_teaching_feedback_word(
     output_path: str, *, board_lines: List[str], clarity: Dict,
-    alignment: Dict, speech_text: str, module_errors: Optional[Dict] = None,
+    dsalignment: Dict, alignment: Dict, speech_text: str, module_errors: Optional[Dict] = None,
 ) -> str:
     if docx is None:
         raise RuntimeError("python-docx is not installed. Run 'pip install python-docx'.")
@@ -494,9 +535,14 @@ def _build_teaching_feedback_word(
         doc.add_paragraph(f"Verdict: {alignment.get('verdict')}")
     else:
         doc.add_paragraph("(skipped or unavailable)")
-        
+
+    doc.add_heading('5. Summary', level=1)
+    if dsalignment:
+        st = dsalignment.get('summary') or "(missing or summarize failed)"
+        doc.add_paragraph(st)
+
     if module_errors:
-        doc.add_heading('5. Steps that reported an error', level=1)
+        doc.add_heading('6. Steps that reported an error', level=1)
         for step_name, message in module_errors.items():
             if message:
                 doc.add_paragraph(f"{step_name}: {message}", style='List Bullet')
@@ -508,6 +554,7 @@ def tmp_save_pdf(output_path: str, payload: Dict[str, Any]) -> Dict[str, Optiona
     lines = payload.get("board_lines") or []
     clarity_block = payload.get("clarity") or {}
     align_block = payload.get("alignment")
+    dsalign_block = payload.get("deepseek_alignment_verdict")
     spoken = payload.get("speech_text") or ""
     failures = payload.get("module_errors")
 
@@ -518,6 +565,7 @@ def tmp_save_pdf(output_path: str, payload: Dict[str, Any]) -> Dict[str, Optiona
             board_lines=lines,
             clarity=clarity_block,
             alignment=align_block,
+            dsalignment=dsalign_block,
             speech_text=spoken,
             module_errors=failures,
         )
@@ -530,6 +578,7 @@ def tmp_save_word(output_path: str, payload: Dict[str, Any]) -> Dict[str, Option
     lines = payload.get("board_lines") or []
     clarity_block = payload.get("clarity") or {}
     align_block = payload.get("alignment")
+    dsalign_block = payload.get("deepseek_alignment_verdict")
     spoken = payload.get("speech_text") or ""
     failures = payload.get("module_errors")
 
@@ -540,11 +589,12 @@ def tmp_save_word(output_path: str, payload: Dict[str, Any]) -> Dict[str, Option
             board_lines=lines,
             clarity=clarity_block,
             alignment=align_block,
+            dsalignment=dsalign_block,
             speech_text=spoken,
             module_errors=failures,
         )
     except Exception as e:
-        logger.exception("Failed to build Word doc")
+        logger.exception("Failed to build Word")
         out["error"] = str(e)
     return out
 

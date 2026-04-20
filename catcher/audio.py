@@ -1,3 +1,29 @@
+"""
+Audio Extraction and Speech-to-Text Pipeline
+============================================
+
+This module manages the auditory analysis component of the Teaching Analysis 
+System. It provides a robust suite of tools for isolating audio from video 
+containers, segmenting speech to optimize transcription, and utilizing 
+OpenAI's Whisper model for automated speech recognition (ASR).
+
+Key Features:
+    * Automatic FFmpeg discovery and environment-agnostic audio extraction.
+    * Multi-threaded model caching for Whisper to manage VRAM/RAM efficiently.
+    * Intelligent silence-based segmentation to improve transcription timestamps.
+    * Pre-processing hooks for tokenization and perplexity scoring.
+    * Thread-safe execution for integration into asynchronous processing tasks.
+
+Dependencies:
+    * ffmpeg: Required for high-performance audio stream demuxing.
+    * whisper: OpenAI's Whisper model for high-accuracy multilingual ASR.
+    * scipy: Used for signal processing and audio resampling (16kHz).
+    * wave: For standard PCM WAV file handling and metadata inspection.
+
+Author: [Lai Tsz Yeung/Group J]
+Date: 2026
+License: MIT
+"""
 import os
 import re
 import shutil
@@ -14,10 +40,10 @@ import numpy as np
 import whisper
 
 # Note: make sure this module exists in your project structure
-from summarize2 import get_preplexity_input
+from summarize import get_perplexity_input
 
-SILENCE_THERSHOLD = 0.0004
-SILENCE_DURATION_SEC = 1.0
+SILENCE_THRESHOLD = 0.0005
+SILENCE_DURATION_SEC = 0.2
 MIN_SEG_SEC = 2.0
 MAX_SEG_SEC = 20.0
 ANALYSIS_WINDOW_SEC = 0.1
@@ -125,7 +151,7 @@ def _has_hf_repo_cache(model_name: str) -> bool:
 _WHISPER_LOCK = threading.Lock()
 _WHISPER_MODELS = {}
 
-def load_whisper_model(model_size: str) -> Any:
+def load_whisper_model(model_size: str) -> whisper.Whisper:
     """
     Loads and caches an OpenAI Whisper model.
 
@@ -322,7 +348,7 @@ def _ffmpeg_extract_pause_from_segments(model: Any, audio: np.ndarray, config: A
     raw_segments = _segment_audio_by_silence(
         audio,
         sample_rate=sample_rate,
-        silence_threshold=SILENCE_THERSHOLD,
+        silence_threshold=SILENCE_THRESHOLD,
         silence_duration_sec=SILENCE_DURATION_SEC,
         min_segment_sec=MIN_SEG_SEC,
         max_segment_sec=MAX_SEG_SEC,
@@ -402,6 +428,8 @@ def extract_audio_ffmpeg(video_path: str, wav_out: str, overwrite: bool = True) 
     fd, tmp_name = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     tmp_path = Path(tmp_name)
+    if not tmp_path.exists():
+        raise FileExistsError(f"tmp file {tmp_name} was interrupted")
     cmd = [
         "ffmpeg","-y",
         "-i", video_path,
@@ -513,8 +541,20 @@ def pause_audio(segments: List[Dict[str, Any]], config: Any) -> List[Dict[str, A
     Returns:
         List[Dict]: The updated segments list.
     """
+    if not segments:
+        return []
+
+    from summarize import _get_device, _get_perplexity_model
+    out = segments
+    device = _get_device()
+    _, tokenizer = _get_perplexity_model(device)
+
+    for seg in out:
+        text = str(seg.get("text") or "").strip()
+        seg["tokens"] = tokenizer.tokenize(text) if text else []
+
     # Logic goes here based on downstream needs
-    return segments
+    return out
 
 
 if __name__ == "__main__":
